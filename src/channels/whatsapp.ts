@@ -6,7 +6,6 @@ import makeWASocket, {
   isJidGroup,
   delay,
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
 import path from 'path';
 import { logger } from '../logger.js';
 import { storeChatMetadata, storeMessage } from '../db.js';
@@ -36,7 +35,7 @@ export class WhatsAppChannel {
 
         if (connection === 'close') {
           const shouldReconnect =
-            (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
 
           logger.info(
             { shouldReconnect, error: lastDisconnect?.error },

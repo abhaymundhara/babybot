@@ -1,4 +1,4 @@
-import { parseExpression } from 'cron-parser';
+import cronParser from 'cron-parser';
 import { SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { getAllTasks } from './db.js';
 import { logger } from './logger.js';
@@ -37,7 +37,7 @@ export function startSchedulerLoop(
               });
 
               // Calculate next run
-              const interval = parseExpression(task.schedule_value, {
+              const interval = cronParser.parse(task.schedule_value, {
                 currentDate: now,
                 tz: TIMEZONE,
               });
