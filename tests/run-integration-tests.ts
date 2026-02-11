@@ -12,6 +12,10 @@ import { runAgentSwarmTests } from './integration/agent-swarm.test.js';
 import { runMemoryContextTests } from './integration/memory-context.test.js';
 import { runConversationContextTests } from './integration/conversation-context.test.js';
 import { runIpcTests } from './integration/ipc.test.js';
+import { runMissingParityTests } from './integration/missing-parity.test.js';
+import { runAgentRunnerToolTests } from './integration/agent-runner-tools.test.js';
+import { runGroupQueueQueryLoopTests } from './integration/group-queue-query-loop.test.js';
+import { runMcpStdioTests } from './integration/mcp-stdio.test.js';
 
 async function runAllTests(): Promise<void> {
   console.log('\n╔════════════════════════════════════════════╗');
@@ -32,6 +36,10 @@ async function runAllTests(): Promise<void> {
     { name: 'Memory Context', fn: runMemoryContextTests },
     { name: 'Conversation Context', fn: runConversationContextTests },
     { name: 'IPC', fn: runIpcTests },
+    { name: 'Missing Parity', fn: runMissingParityTests },
+    { name: 'Agent Runner Tool Bridge', fn: runAgentRunnerToolTests },
+    { name: 'MCP Stdio Parity', fn: runMcpStdioTests },
+    { name: 'Group Queue Query Loop', fn: runGroupQueueQueryLoopTests },
     { name: 'Agent Swarms', fn: runAgentSwarmTests },
   ];
 

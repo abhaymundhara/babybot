@@ -32,3 +32,13 @@ export interface ChatMetadata {
   name: string;
   last_message_time: string;
 }
+
+export interface TaskRunLog {
+  id?: number;
+  task_id: number;
+  run_at: string;
+  duration_ms: number;
+  status: 'success' | 'error';
+  result: string | null;
+  error: string | null;
+}

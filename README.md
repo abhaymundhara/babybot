@@ -23,9 +23,13 @@ Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw), BabyBot brings you
 - ⏰ **Scheduled Tasks** - Recurring jobs that run automatically
 - 🧩 **Agent Skill Calls** - Skills are synced NanoClaw-style and `/<skill-name>` is routed to the agent (use `/list-skills` to discover)
 - 🛠️ **Host Admin Commands** - Manage groups and tasks directly from chat (`/list-groups`, `/register-group`, `/list-tasks`, etc.)
+- 🔁 **Long-lived Container Sessions** - Active group containers keep context and accept follow-up IPC messages before idle close
+- 🌐 **Browser Automation Runtime** - `agent-browser` + Chromium support in container runtime (`agent_browser` tool)
 - 🎯 **Trigger-based Responses** - Control when the bot responds with `@Baby`
 - 📝 **Persistent Memory** - Each group maintains `CLAUDE.md` memory (with `MEMORY.md` legacy fallback)
 - 🔄 **Session Management** - Conversations maintain context across messages
+- 🗂️ **Conversation Archival Hooks** - Auto-archives older chat history into `groups/<group>/archives`
+- 📜 **Task Run History** - Scheduler writes per-run task logs (status, duration, result/error)
 - 🤝 **Agent Swarms (Experimental)** - Multi-agent task orchestration and delegation
 
 ## Requirements
@@ -125,6 +129,10 @@ MAIN_CHAT_JID=15551234567@s.whatsapp.net
 
 # Strict NanoClaw-style group registration (recommended)
 AUTO_REGISTER_NEW_CHATS=false
+
+# Conversation archive controls
+CONVERSATION_ARCHIVE_TRIGGER=200
+CONVERSATION_ARCHIVE_KEEP_RECENT=80
 
 # LLM provider (ollama or openrouter)
 LLM_PROVIDER=ollama

@@ -5,8 +5,11 @@ import path from 'path';
 import {
   AUTO_REGISTER_NEW_CHATS,
   ASSISTANT_NAME,
+  CONVERSATION_ARCHIVE_KEEP_RECENT,
+  CONVERSATION_ARCHIVE_TRIGGER,
   CONVERSATION_CONTEXT_WINDOW,
   GROUPS_DIR,
+  IDLE_TIMEOUT,
   MAIN_CHAT_JID,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -72,6 +75,7 @@ import {
   parseHostSkillCommand,
 } from './skill-commands.js';
 import { computeNextRun } from './scheduling.js';
+import { maybeArchiveConversation } from './conversation-archive.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -553,6 +557,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const latestMessageTimestamp =
     missedMessages[missedMessages.length - 1].timestamp;
+
+  const groupDir = path.join(GROUPS_DIR, group.folder);
+  const archiveResult = maybeArchiveConversation({
+    chatJid,
+    groupDir,
+    triggerMessageCount: CONVERSATION_ARCHIVE_TRIGGER,
+    keepRecentMessages: CONVERSATION_ARCHIVE_KEEP_RECENT,
+  });
+  if (archiveResult.archivedCount > 0) {
+    logger.info(
+      {
+        chatJid,
+        group: group.name,
+        archivedCount: archiveResult.archivedCount,
+        archivePath: archiveResult.archivePath,
+      },
+      'Archived conversation history chunk',
+    );
+  }
+
   const promptMessages = getConversationMessages(
     chatJid,
     latestMessageTimestamp,
@@ -572,8 +596,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     'Processing messages',
   );
 
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      logger.debug({ group: group.name }, 'Idle timeout, closing active container');
+      queue.closeStdin(chatJid);
+    }, IDLE_TIMEOUT);
+  };
+
   await whatsapp.setTyping(chatJid, true);
   let hadError = false;
+  let outputSentToUser = false;
 
   const output = await runAgent(
     group,
@@ -589,18 +623,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         );
         if (text) {
           await whatsapp.sendMessage(chatJid, text);
+          outputSentToUser = true;
         }
+        resetIdleTimer();
       }
 
       if (result.status === 'error') {
         hadError = true;
       }
     },
+    { queryLoop: true },
   );
 
   await whatsapp.setTyping(chatJid, false);
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+  }
 
   if (output === 'error' || hadError) {
+    if (outputSentToUser) {
+      logger.warn(
+        { group: group.name },
+        'Agent errored after delivering output; skipping cursor rollback',
+      );
+      return true;
+    }
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
@@ -619,6 +666,7 @@ async function runAgent(
   chatJid: string,
   requestedSkills: string[] = [],
   onOutput?: (output: OllamaOutput | ContainerOutput) => Promise<void>,
+  options: { queryLoop?: boolean } = {},
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -633,11 +681,15 @@ async function runAgent(
     (memoryContext ? `\n\nMemory/Context:\n${memoryContext}` : '') +
     (skillContext ? `\n\n${skillContext}` : '');
 
+  let sawStreamingError = false;
   const wrappedOnOutput = onOutput
     ? async (output: OllamaOutput | ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+        }
+        if (output.status === 'error') {
+          sawStreamingError = true;
         }
         await onOutput(output);
       }
@@ -651,6 +703,7 @@ async function runAgent(
       chatJid,
       isMain,
       systemPrompt,
+      queryLoop: options.queryLoop ?? false,
     };
 
     const runtimeConfig = getContainerConfig();
@@ -665,7 +718,8 @@ async function runAgent(
       output = await runContainerAgent(
         group,
         input,
-        undefined,
+        (proc, containerName) =>
+          queue.registerProcess(chatJid, proc, containerName, group.folder),
         wrappedOnOutput,
       );
       if (output.status === 'error' && strategy.allowFallbackToDirect) {
@@ -686,6 +740,13 @@ async function runAgent(
 
     if (output.status === 'error') {
       logger.error({ group: group.name, error: output.error }, 'Agent error');
+      return 'error';
+    }
+    if (sawStreamingError) {
+      logger.error(
+        { group: group.name },
+        'Agent reported streaming error output',
+      );
       return 'error';
     }
 
@@ -753,8 +814,34 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger && !hasSkillInvocation && !hasHostCommand) continue;
           }
 
-          // Enqueue processing
-          queue.enqueue(chatJid, () => processGroupMessages(chatJid));
+          const hasHostCommand = groupMessages.some((m) =>
+            isHostCommandText(m.content),
+          );
+          if (hasHostCommand) {
+            queue.enqueueMessageCheck(chatJid);
+            continue;
+          }
+
+          const allPending = getMessagesSince(
+            chatJid,
+            lastAgentTimestamp[chatJid] || '',
+            ASSISTANT_NAME,
+          );
+          const messagesToSend = allPending.length > 0 ? allPending : groupMessages;
+          const formatted = formatMessages(messagesToSend);
+
+          if (queue.sendMessage(chatJid, formatted)) {
+            logger.debug(
+              { chatJid, messageCount: messagesToSend.length },
+              'Piped messages to active container',
+            );
+            lastAgentTimestamp[chatJid] =
+              messagesToSend[messagesToSend.length - 1].timestamp;
+            saveState();
+            continue;
+          }
+
+          queue.enqueueMessageCheck(chatJid);
         }
       }
 
@@ -902,12 +989,28 @@ async function main(): Promise<void> {
     }
 
     // Run the task
-    await runAgent(group, task.prompt, chatJid, [], async (result) => {
-      if (result.result && !isMainGroupByJid(chatJid)) {
-        await whatsapp.sendMessage(chatJid, result.result);
-      }
-    });
+    let latestResult: string | null = null;
+    const runStatus = await runAgent(
+      group,
+      task.prompt,
+      chatJid,
+      [],
+      async (result) => {
+        if (result.result && !isMainGroupByJid(chatJid)) {
+          latestResult = result.result;
+          await whatsapp.sendMessage(chatJid, result.result);
+        }
+      },
+      { queryLoop: false },
+    );
+    if (runStatus === 'error') {
+      throw new Error('Scheduled agent execution failed');
+    }
+
+    return { result: latestResult };
   });
+
+  queue.setProcessMessagesFn(processGroupMessages);
 
   // Start message processing loop
   startMessageLoop();

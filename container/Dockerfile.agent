@@ -1,6 +1,26 @@
 # Agent Container Image
 
-FROM node:20-alpine
+FROM node:22-slim
+
+# Install Chromium runtime deps and browser packages for agent-browser.
+RUN apt-get update && apt-get install -y \
+    chromium \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    libgbm1 \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -10,12 +30,17 @@ COPY container/agent-runner/package*.json ./
 # Install dependencies
 RUN npm install --omit=dev --no-audit --no-fund
 
+# Install browser automation CLI used by agent-browser skill.
+RUN npm install -g agent-browser
+
 # Copy built agent runner
 COPY container/agent-runner/dist ./dist
 
 # Set environment defaults
 ENV OLLAMA_BASE_URL=http://host.docker.internal:11434
 ENV OLLAMA_MODEL=llama2
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Entry point
 CMD ["node", "dist/index.js"]

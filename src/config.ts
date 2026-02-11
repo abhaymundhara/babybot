@@ -8,6 +8,14 @@ export const CONVERSATION_CONTEXT_WINDOW = Math.max(
   1,
   parseInt(process.env.CONVERSATION_CONTEXT_WINDOW || '12', 10) || 12,
 );
+export const CONVERSATION_ARCHIVE_TRIGGER = Math.max(
+  20,
+  parseInt(process.env.CONVERSATION_ARCHIVE_TRIGGER || '200', 10) || 200,
+);
+export const CONVERSATION_ARCHIVE_KEEP_RECENT = Math.max(
+  10,
+  parseInt(process.env.CONVERSATION_ARCHIVE_KEEP_RECENT || '80', 10) || 80,
+);
 
 // Absolute paths
 const PROJECT_ROOT = process.cwd();

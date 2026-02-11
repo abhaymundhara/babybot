@@ -4,7 +4,13 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
-import { ChatMetadata, NewMessage, RegisteredGroup, Task } from './types.js';
+import {
+  ChatMetadata,
+  NewMessage,
+  RegisteredGroup,
+  Task,
+  TaskRunLog,
+} from './types.js';
 
 let db: Database.Database;
 
@@ -62,6 +68,8 @@ export function initDatabase(customDbPath?: string): void {
       schedule_value TEXT NOT NULL,
       status TEXT DEFAULT 'active',
       next_run TEXT,
+      last_run TEXT,
+      last_result TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -74,11 +82,35 @@ export function initDatabase(customDbPath?: string): void {
       name TEXT NOT NULL,
       last_message_time TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS task_run_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      run_at TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      result TEXT,
+      error TEXT,
+      FOREIGN KEY(task_id) REFERENCES tasks(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_run_logs_task_run
+      ON task_run_logs(task_id, run_at DESC);
   `);
 
   // Migration for existing databases.
   try {
     db.exec('ALTER TABLE tasks ADD COLUMN chat_jid TEXT');
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec('ALTER TABLE tasks ADD COLUMN last_run TEXT');
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec('ALTER TABLE tasks ADD COLUMN last_result TEXT');
   } catch {
     // Column already exists
   }
@@ -367,13 +399,102 @@ export function updateTaskStatus(
 }
 
 export function deleteTask(taskId: number): void {
+  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(taskId);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 }
 
 export function deleteTasksForGroup(groupFolder: string): void {
+  db.prepare(
+    'DELETE FROM task_run_logs WHERE task_id IN (SELECT id FROM tasks WHERE group_folder = ?)',
+  ).run(groupFolder);
   db.prepare('DELETE FROM tasks WHERE group_folder = ?').run(groupFolder);
 }
 
 export function markTaskCompleted(taskId: number): void {
   updateTaskStatus(taskId, 'completed');
+}
+
+export function updateTaskAfterRun(
+  taskId: number,
+  nextRun: string | null,
+  lastResult: string,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE tasks
+     SET next_run = ?,
+         last_run = ?,
+         last_result = ?,
+         status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+  ).run(nextRun, now, lastResult, nextRun, taskId);
+}
+
+export function logTaskRun(run: TaskRunLog): void {
+  db.prepare(
+    `INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    run.task_id,
+    run.run_at,
+    run.duration_ms,
+    run.status,
+    run.result,
+    run.error,
+  );
+}
+
+export function getTaskRunLogs(taskId: number, limit = 50): TaskRunLog[] {
+  return db
+    .prepare(
+      `SELECT id, task_id, run_at, duration_ms, status, result, error
+       FROM task_run_logs
+       WHERE task_id = ?
+       ORDER BY run_at DESC
+       LIMIT ?`,
+    )
+    .all(taskId, Math.max(1, limit)) as TaskRunLog[];
+}
+
+export function getMessageCount(chatJid: string): number {
+  const row = db
+    .prepare('SELECT COUNT(*) as count FROM messages WHERE chat_jid = ?')
+    .get(chatJid) as { count: number };
+  return row?.count || 0;
+}
+
+export function getMessagesForArchive(
+  chatJid: string,
+  afterIdExclusive: number,
+  upToIdInclusive: number,
+): NewMessage[] {
+  return db
+    .prepare(
+      `SELECT id, chat_jid, sender_jid, sender_name, content, timestamp, from_assistant
+       FROM messages
+       WHERE chat_jid = ?
+         AND id > ?
+         AND id <= ?
+       ORDER BY id ASC`,
+    )
+    .all(chatJid, afterIdExclusive, upToIdInclusive) as NewMessage[];
+}
+
+export function getArchiveCutoffMessageId(
+  chatJid: string,
+  keepRecentMessages: number,
+): number | null {
+  const row = db
+    .prepare(
+      `SELECT id
+       FROM messages
+       WHERE chat_jid = ?
+       ORDER BY id DESC
+       LIMIT 1 OFFSET ?`,
+    )
+    .get(chatJid, Math.max(0, keepRecentMessages - 1)) as
+    | { id: number }
+    | undefined;
+  return row?.id ?? null;
 }

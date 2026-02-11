@@ -29,6 +29,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   systemPrompt?: string;
+  queryLoop?: boolean;
 }
 
 export interface ContainerOutput {
@@ -38,15 +39,20 @@ export interface ContainerOutput {
   error?: string;
 }
 
-interface VolumeMount {
+export interface VolumeMount {
   hostPath: string;
   containerPath: string;
   readonly: boolean;
 }
 
-interface ContainerEnvVar {
+export interface ContainerEnvVar {
   key: string;
   value: string;
+}
+
+export interface PreparedContainerExecution {
+  mounts: VolumeMount[];
+  envVars: ContainerEnvVar[];
 }
 
 export interface TaskSnapshot {
@@ -106,11 +112,46 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
   });
+
+  // Per-group persisted Claude-style session directory.
+  const sessionDir = path.join(DATA_DIR, 'sessions', group.folder, '.claude');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const settingsPath = path.join(sessionDir, 'settings.json');
+  if (!fs.existsSync(settingsPath)) {
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          env: {
+            OLLAMA_EXPERIMENTAL_AGENT_TEAMS: '1',
+            OLLAMA_ADDITIONAL_DIRECTORIES_MEMORY: '1',
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+  mounts.push({
+    hostPath: sessionDir,
+    containerPath: '/home/node/.claude',
+    readonly: false,
+  });
+
+  const envDir = ensureFilteredEnvDir(group.folder);
+  if (envDir) {
+    mounts.push({
+      hostPath: envDir,
+      containerPath: '/workspace/env-dir',
+      readonly: true,
+    });
+  }
 
   const allowlist = loadMountAllowlist(
     MOUNT_ALLOWLIST_PATH,
@@ -124,6 +165,55 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   }
 
   return mounts;
+}
+
+function ensureFilteredEnvDir(groupFolder: string): string | null {
+  const allowedKeys = [
+    'LLM_PROVIDER',
+    'OLLAMA_BASE_URL',
+    'OLLAMA_MODEL',
+    'OPENROUTER_BASE_URL',
+    'OPENROUTER_MODEL',
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_SITE_URL',
+    'OPENROUTER_APP_NAME',
+  ] as const;
+
+  const lines: string[] = [];
+  for (const key of allowedKeys) {
+    const value = process.env[key];
+    if (!value) continue;
+    lines.push(`${key}=${value}`);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const envDir = path.join(DATA_DIR, 'env', groupFolder);
+  fs.mkdirSync(envDir, { recursive: true });
+  fs.writeFileSync(path.join(envDir, 'env'), `${lines.join('\n')}\n`);
+  return envDir;
+}
+
+function buildExecutionEnvVars(mounts: VolumeMount[]): ContainerEnvVar[] {
+  const envVars: ContainerEnvVar[] = [];
+  if (mounts.some((mount) => mount.containerPath === '/workspace/env-dir')) {
+    envVars.push({
+      key: 'BABYBOT_ENV_FILE',
+      value: '/workspace/env-dir/env',
+    });
+  }
+  return envVars;
+}
+
+export function prepareContainerExecution(
+  group: RegisteredGroup,
+  isMain: boolean,
+): PreparedContainerExecution {
+  const mounts = buildVolumeMounts(group, isMain);
+  const envVars = buildExecutionEnvVars(mounts);
+  return { mounts, envVars };
 }
 
 /**
@@ -210,24 +300,9 @@ export async function runContainerAgent(
     };
   }
 
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const passthroughEnvKeys = [
-    'LLM_PROVIDER',
-    'OLLAMA_BASE_URL',
-    'OLLAMA_MODEL',
-    'OPENROUTER_BASE_URL',
-    'OPENROUTER_MODEL',
-    'OPENROUTER_API_KEY',
-    'OPENROUTER_SITE_URL',
-    'OPENROUTER_APP_NAME',
-  ] as const;
-  const envVars: ContainerEnvVar[] = [];
-  for (const key of passthroughEnvKeys) {
-    const value = process.env[key];
-    if (value) {
-      envVars.push({ key, value });
-    }
-  }
+  const prepared = prepareContainerExecution(group, input.isMain);
+  const mounts = prepared.mounts;
+  const envVars = prepared.envVars;
 
   const safeFolder = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `babybot-${safeFolder}-${Date.now()}`;
@@ -259,6 +334,24 @@ export async function runContainerAgent(
     let stdout = '';
     let stderr = '';
     let stdoutTruncated = false;
+    let parseBuffer = '';
+    let outputChain = Promise.resolve();
+    let latestSessionId: string | undefined;
+    let hadStreamingOutput = false;
+    let timedOut = false;
+
+    const timeoutMs = config.timeout;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const stopForTimeout = () => {
+      timedOut = true;
+      container.kill();
+      logger.warn({ group: group.name }, 'Container timeout, killing process');
+    };
+    const resetTimeout = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(stopForTimeout, timeoutMs);
+    };
+    resetTimeout();
 
     // Write input and close stdin
     container.stdin.write(JSON.stringify(input));
@@ -277,9 +370,38 @@ export async function runContainerAgent(
         }
       }
 
-      // Parse streaming output
-      if (onOutput) {
-        parseStreamingOutput(chunk, onOutput);
+      if (!onOutput) {
+        return;
+      }
+
+      parseBuffer += chunk;
+      let startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER);
+      while (startIdx !== -1) {
+        const endIdx = parseBuffer.indexOf(
+          OUTPUT_END_MARKER,
+          startIdx + OUTPUT_START_MARKER.length,
+        );
+        if (endIdx === -1) {
+          break;
+        }
+
+        const jsonStr = parseBuffer
+          .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+          .trim();
+        parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+        startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER);
+
+        try {
+          const parsed = JSON.parse(jsonStr) as ContainerOutput;
+          hadStreamingOutput = true;
+          if (parsed.newSessionId) {
+            latestSessionId = parsed.newSessionId;
+          }
+          resetTimeout();
+          outputChain = outputChain.then(() => onOutput(parsed));
+        } catch (err) {
+          logger.warn({ err }, 'Failed to parse streaming output');
+        }
       }
     });
 
@@ -290,6 +412,33 @@ export async function runContainerAgent(
 
     // Handle completion
     container.on('close', (code) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (timedOut && hadStreamingOutput) {
+        outputChain
+          .catch((err) => {
+            logger.error({ err }, 'Error in onOutput callback chain');
+          })
+          .finally(() => {
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId: latestSessionId,
+            });
+          });
+        return;
+      }
+
+      if (timedOut) {
+        resolve({
+          status: 'error',
+          result: null,
+          error: 'Container execution timeout',
+        });
+        return;
+      }
+
       if (code !== 0) {
         logger.error(
           { group: group.name, code, stderr: stderr.slice(0, 500) },
@@ -303,51 +452,26 @@ export async function runContainerAgent(
         return;
       }
 
+      if (onOutput) {
+        outputChain
+          .catch((err) => {
+            logger.error({ err }, 'Error in onOutput callback chain');
+          })
+          .finally(() => {
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId: latestSessionId,
+            });
+          });
+        return;
+      }
+
       // Parse final output
       const output = parseContainerOutput(stdout);
       resolve(output);
     });
-
-    // Timeout
-    setTimeout(() => {
-      container.kill();
-      logger.warn({ group: group.name }, 'Container timeout, killing process');
-      resolve({
-        status: 'error',
-        result: null,
-        error: 'Container execution timeout',
-      });
-    }, config.timeout);
   });
-}
-
-/**
- * Parse streaming output from container
- */
-function parseStreamingOutput(
-  chunk: string,
-  onOutput: (output: ContainerOutput) => Promise<void>,
-): void {
-  // Look for output markers
-  const lines = chunk.split('\n');
-  for (const line of lines) {
-    if (line.includes(OUTPUT_START_MARKER)) {
-      // Extract JSON between markers
-      const startIdx = line.indexOf(OUTPUT_START_MARKER) + OUTPUT_START_MARKER.length;
-      const endIdx = line.indexOf(OUTPUT_END_MARKER);
-      if (endIdx !== -1) {
-        try {
-          const jsonStr = line.slice(startIdx, endIdx);
-          const output = JSON.parse(jsonStr) as ContainerOutput;
-          onOutput(output).catch((err) => {
-            logger.error({ err }, 'Error in onOutput callback');
-          });
-        } catch (err) {
-          logger.warn({ err, line }, 'Failed to parse streaming output');
-        }
-      }
-    }
-  }
 }
 
 /**
@@ -418,4 +542,36 @@ export function writeGroupsSnapshot(
       2,
     ),
   );
+}
+
+export function enqueueContainerInput(
+  groupFolder: string,
+  text: string,
+): void {
+  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+  fs.mkdirSync(inputDir, { recursive: true });
+  const filePath = path.join(
+    inputDir,
+    `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+  );
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify(
+      {
+        type: 'message',
+        text,
+        timestamp: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tempPath, filePath);
+}
+
+export function closeContainerInput(groupFolder: string): void {
+  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+  fs.mkdirSync(inputDir, { recursive: true });
+  fs.writeFileSync(path.join(inputDir, '_close'), '');
 }
