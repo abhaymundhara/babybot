@@ -27,7 +27,7 @@ import {
   setSession,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { startIpcWatcher } from './ipc.js';
+import { startEnhancedIPC } from './ipc-enhanced.js';
 import { formatMessages } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
@@ -332,8 +332,8 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  // Start IPC watcher
-  startIpcWatcher(async (groupFolder, data) => {
+  // Start Enhanced IPC watcher
+  startEnhancedIPC(async (groupFolder, data) => {
     logger.info({ groupFolder, data }, 'Received IPC message');
     // Handle IPC messages (e.g., tasks, admin commands)
   });
