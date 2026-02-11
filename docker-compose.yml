@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  babybot:
+    build: .
+    container_name: babybot
+    restart: unless-stopped
+    volumes:
+      # Persist authentication and data
+      - ./auth_info_baileys:/app/auth_info_baileys
+      - ./data:/app/data
+      - ./groups:/app/groups
+    env_file:
+      # Load environment variables from .env file
+      - .env
+    environment:
+      # Ollama runs on host machine
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - babybot-network
+
+networks:
+  babybot-network:
+    driver: bridge

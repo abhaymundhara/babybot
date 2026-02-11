@@ -1,0 +1,40 @@
+{
+  "name": "babybot",
+  "version": "1.0.0",
+  "description": "Personal AI assistant with Ollama. Lightweight, secure, customizable.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "auth": "tsx src/whatsapp-auth.ts",
+    "test": "tsx tests/run-integration-tests.ts",
+    "test:container": "tsx tests/integration/container-runtime.test.ts",
+    "test:skills": "tsx tests/integration/skills.test.ts",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "better-sqlite3": "^11.8.1",
+    "cron-parser": "^5.5.0",
+    "dotenv": "^16.4.5",
+    "ollama": "^0.5.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "@types/uuid": "^10.0.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

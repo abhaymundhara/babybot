@@ -1,0 +1,23 @@
+node_modules
+dist
+.env
+data/
+store/
+groups/
+!groups/main/MEMORY.md
+auth_info_baileys/
+*.log
+.DS_Store
+*.db
+*.db-journal
+
+# Container build artifacts
+container/agent-runner/node_modules
+container/agent-runner/dist
+container/agent-runner/package-lock.json
+
+# Skills are synced from container/skills, don't commit copies
+**/.skills/
+
+# Test data
+tests/.test-data/
