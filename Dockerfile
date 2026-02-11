@@ -29,6 +29,4 @@ RUN mkdir -p data groups auth_info_baileys
 ENV NODE_ENV=production
 ENV OLLAMA_BASE_URL=http://host.docker.internal:11434
 
-EXPOSE 3000
-
 CMD ["npm", "start"]

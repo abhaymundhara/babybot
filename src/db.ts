@@ -100,10 +100,10 @@ export function getNewMessages(
        FROM messages
        WHERE chat_jid IN (${placeholders})
          AND timestamp > ?
-         AND sender_name != ?
+         AND from_assistant = 0
        ORDER BY timestamp ASC`,
     )
-    .all(...chatJids, sinceTimestamp, assistantName) as NewMessage[];
+    .all(...chatJids, sinceTimestamp) as NewMessage[];
 
   const newTimestamp = rows.length > 0 ? rows[rows.length - 1].timestamp : sinceTimestamp;
 
@@ -121,10 +121,10 @@ export function getMessagesSince(
        FROM messages
        WHERE chat_jid = ?
          AND timestamp > ?
-         AND sender_name != ?
+         AND from_assistant = 0
        ORDER BY timestamp ASC`,
     )
-    .all(chatJid, sinceTimestamp, assistantName) as NewMessage[];
+    .all(chatJid, sinceTimestamp) as NewMessage[];
 }
 
 export function getRouterState(key: string): string | null {

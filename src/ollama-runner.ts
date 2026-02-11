@@ -1,5 +1,5 @@
 import { Ollama } from 'ollama';
-import { OLLAMA_BASE_URL, OLLAMA_MODEL } from './config.js';
+import { ASSISTANT_NAME, OLLAMA_BASE_URL, OLLAMA_MODEL } from './config.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -129,7 +129,7 @@ export function clearSession(sessionId: string): void {
 // Get default system prompt
 export function getSystemPrompt(groupName: string, isMain: boolean): string {
   if (isMain) {
-    return `You are a helpful AI assistant. You can help manage tasks, schedule jobs, and interact with various groups. Your name is Baby. Be concise and helpful.`;
+    return `You are a helpful AI assistant. You can help manage tasks, schedule jobs, and interact with various groups. Your name is ${ASSISTANT_NAME}. Be concise and helpful.`;
   }
-  return `You are a helpful AI assistant in the ${groupName} group. Your name is Baby. Be concise and helpful in your responses.`;
+  return `You are a helpful AI assistant in the ${groupName} group. Your name is ${ASSISTANT_NAME}. Be concise and helpful in your responses.`;
 }

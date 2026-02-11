@@ -1,9 +1,9 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -16,10 +16,8 @@ import {
   OllamaOutput,
 } from './ollama-runner.js';
 import {
-  getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
-  getAllTasks,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -297,8 +295,26 @@ async function main(): Promise<void> {
   whatsapp = new WhatsAppChannel();
 
   await whatsapp.connect(async (chatJid, senderJid, senderName, text) => {
-    // Message is already stored by WhatsAppChannel
-    logger.debug({ chatJid, senderName }, 'Message received callback');
+    // Auto-register new chats/groups on first inbound message
+    if (!registeredGroups[chatJid]) {
+      // Derive a filesystem-safe folder name from the chat JID
+      const safeFolder = chatJid.replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+      // Use a descriptive name for the group
+      const groupName = chatJid.endsWith('@g.us') ? `Group ${safeFolder}` : senderName;
+
+      logger.info(
+        { chatJid, groupName, folder: safeFolder },
+        'Auto-registering new chat/group',
+      );
+
+      registerGroup(chatJid, {
+        name: groupName,
+        folder: safeFolder,
+        // Require trigger word for auto-created groups to avoid unsolicited responses
+        requiresTrigger: true,
+      });
+    }
   });
 
   // Wait for connection

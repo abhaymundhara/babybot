@@ -2,11 +2,10 @@ import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
   WASocket,
-  proto,
   isJidGroup,
-  delay,
 } from '@whiskeysockets/baileys';
 import path from 'path';
+import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { storeChatMetadata, storeMessage } from '../db.js';
 
@@ -34,6 +33,7 @@ export class WhatsAppChannel {
         const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
+          this.connected = false;
           const shouldReconnect =
             (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
 
@@ -83,8 +83,10 @@ export class WhatsAppChannel {
             (msg.messageTimestamp as number) * 1000,
           ).toISOString();
 
-          // Store in database
-          storeMessage(chatJid, senderJid, pushName, text, timestamp, false);
+          // Store in database - fromMe messages are from the assistant
+          const fromAssistant = msg.key.fromMe || false;
+          const senderName = fromAssistant ? ASSISTANT_NAME : pushName;
+          storeMessage(chatJid, senderJid, senderName, text, timestamp, fromAssistant);
           storeChatMetadata(chatJid, chatName, timestamp);
 
           // Don't process our own messages
@@ -114,7 +116,7 @@ export class WhatsAppChannel {
 
       // Store our message in database
       const timestamp = new Date().toISOString();
-      storeMessage(jid, this.sock.user?.id || '', 'Baby', text, timestamp, true);
+      storeMessage(jid, this.sock.user?.id || '', ASSISTANT_NAME, text, timestamp, true);
 
       logger.info({ jid, text: text.slice(0, 100) }, 'Sent message');
     } catch (error) {

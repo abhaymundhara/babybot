@@ -4,9 +4,8 @@ export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Baby';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
-// Absolute paths needed for container mounts
+// Absolute paths
 const PROJECT_ROOT = process.cwd();
-const HOME_DIR = process.env.HOME || '/home/user';
 
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');

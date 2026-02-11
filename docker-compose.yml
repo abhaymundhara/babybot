@@ -10,8 +10,9 @@ services:
       - ./auth_info_baileys:/app/auth_info_baileys
       - ./data:/app/data
       - ./groups:/app/groups
-      # Mount .env file
-      - ./.env:/app/.env:ro
+    env_file:
+      # Load environment variables from .env file
+      - .env
     environment:
       # Ollama runs on host machine
       - OLLAMA_BASE_URL=http://host.docker.internal:11434

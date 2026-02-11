@@ -1,4 +1,3 @@
-import { ChildProcess } from 'child_process';
 import { MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
 
@@ -9,17 +8,9 @@ interface QueuedTask {
   reject: (error: Error) => void;
 }
 
-interface ActiveProcess {
-  process: ChildProcess | null;
-  containerName: string;
-  groupFolder: string;
-  stdin: any;
-}
-
 export class GroupQueue {
   private queue: QueuedTask[] = [];
   private running = 0;
-  private activeProcesses: Map<string, ActiveProcess> = new Map();
 
   async enqueue(chatJid: string, process: () => Promise<boolean>): Promise<boolean> {
     return new Promise((resolve, reject) => {
@@ -50,37 +41,6 @@ export class GroupQueue {
     } finally {
       this.running--;
       this.processNext();
-    }
-  }
-
-  registerProcess(
-    chatJid: string,
-    process: ChildProcess | null,
-    containerName: string,
-    groupFolder: string,
-  ): void {
-    this.activeProcesses.set(chatJid, {
-      process,
-      containerName,
-      groupFolder,
-      stdin: process?.stdin || null,
-    });
-  }
-
-  closeStdin(chatJid: string): void {
-    const activeProcess = this.activeProcesses.get(chatJid);
-    if (activeProcess?.stdin && !activeProcess.stdin.destroyed) {
-      activeProcess.stdin.end();
-      logger.debug({ chatJid }, 'Closed stdin for group process');
-    }
-  }
-
-  killProcess(chatJid: string): void {
-    const activeProcess = this.activeProcesses.get(chatJid);
-    if (activeProcess?.process) {
-      activeProcess.process.kill();
-      this.activeProcesses.delete(chatJid);
-      logger.info({ chatJid }, 'Killed process for group');
     }
   }
 

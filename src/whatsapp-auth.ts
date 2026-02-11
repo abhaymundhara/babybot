@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import makeWASocket, { useMultiFileAuthState } from '@whiskeysockets/baileys';
 import path from 'path';
 import { logger } from './logger.js';
