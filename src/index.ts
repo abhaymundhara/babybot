@@ -3,9 +3,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AUTO_REGISTER_NEW_CHATS,
   ASSISTANT_NAME,
   CONVERSATION_CONTEXT_WINDOW,
   GROUPS_DIR,
+  MAIN_CHAT_JID,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
@@ -13,23 +15,41 @@ import {
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { getSystemPrompt, OllamaOutput } from './ollama-runner.js';
 import { runDirectAgent } from './direct-runner.js';
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
-import { getContainerConfig } from './container-runtime.js';
+import {
+  AvailableGroup,
+  ContainerOutput,
+  runContainerAgent,
+  writeGroupsSnapshot,
+  writeTasksSnapshot,
+} from './container-runner.js';
+import {
+  ensureContainerRuntimeReady,
+  getContainerConfig,
+} from './container-runtime.js';
 import { getRuntimeStrategy } from './runtime-strategy.js';
 import {
+  createTask,
+  deleteRegisteredGroup,
+  deleteTask,
+  deleteTasksForGroup,
+  getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
+  getAllTasks,
   getConversationMessages,
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getTaskById,
   initDatabase,
   setRegisteredGroup,
   setRouterState,
   setSession,
+  updateTaskDefinition,
+  updateTaskStatus,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { startEnhancedIPC } from './ipc-enhanced.js';
+import { startIpcWatcher } from './ipc.js';
 import { formatMessages } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
@@ -49,12 +69,14 @@ import {
   extractSkillInvocations,
   parseHostSkillCommand,
 } from './skill-commands.js';
+import { computeNextRun } from './scheduling.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+const mainChatJid = MAIN_CHAT_JID;
 
 let whatsapp: WhatsAppChannel;
 const queue = new GroupQueue();
@@ -81,6 +103,59 @@ function saveState(): void {
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
+function isMainGroupByJid(chatJid: string): boolean {
+  return chatJid === mainChatJid;
+}
+
+function getAvailableGroups(): AvailableGroup[] {
+  const chats = getAllChats();
+  const groups: AvailableGroup[] = chats.map((chat) => ({
+    jid: chat.jid,
+    name: chat.name,
+    lastActivity: chat.last_message_time,
+    isRegistered: Boolean(registeredGroups[chat.jid]),
+  }));
+
+  const seen = new Set(groups.map((group) => group.jid));
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (seen.has(jid)) continue;
+    groups.push({
+      jid,
+      name: group.name,
+      lastActivity: new Date(0).toISOString(),
+      isRegistered: true,
+    });
+  }
+
+  return groups.sort((a, b) => {
+    const aTime = Date.parse(a.lastActivity) || 0;
+    const bTime = Date.parse(b.lastActivity) || 0;
+    return bTime - aTime;
+  });
+}
+
+function updateIpcSnapshotsForGroup(groupFolder: string, isMain: boolean): void {
+  const tasks = getAllTasks().map((task) => ({
+    id: task.id,
+    groupFolder: task.group_folder,
+    prompt: task.prompt,
+    schedule_type: task.schedule_type,
+    schedule_value: task.schedule_value,
+    status: task.status,
+    next_run: task.next_run,
+  }));
+
+  writeTasksSnapshot(groupFolder, isMain, tasks);
+  writeGroupsSnapshot(groupFolder, isMain, getAvailableGroups());
+}
+
+function updateIpcSnapshotsForAllGroups(): void {
+  const folders = new Set(Object.values(registeredGroups).map((g) => g.folder));
+  for (const folder of folders) {
+    updateIpcSnapshotsForGroup(folder, folder === MAIN_GROUP_FOLDER);
+  }
+}
+
 function registerGroup(jid: string, group: RegisteredGroup): void {
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
@@ -94,11 +169,25 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   // Sync skills to this group
   syncSkillsToGroup(group.folder);
+  updateIpcSnapshotsForGroup(group.folder, group.folder === MAIN_GROUP_FOLDER);
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',
   );
+}
+
+function unregisterGroup(jid: string): void {
+  const existing = registeredGroups[jid];
+  if (!existing) return;
+  if (existing.folder === MAIN_GROUP_FOLDER) return;
+
+  delete registeredGroups[jid];
+  deleteRegisteredGroup(jid);
+  deleteTasksForGroup(existing.folder);
+  delete sessions[existing.folder];
+
+  logger.info({ jid, folder: existing.folder }, 'Group unregistered');
 }
 
 async function handleHostSkillCommand(chatJid: string): Promise<void> {
@@ -278,6 +367,7 @@ async function runAgent(
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
+  updateIpcSnapshotsForGroup(group.folder, isMain);
 
   const memoryContext = loadMemoryContext(GROUPS_DIR, group.folder);
 
@@ -421,6 +511,9 @@ async function startMessageLoop(): Promise<void> {
 async function main(): Promise<void> {
   logger.info('BabyBot starting...');
 
+  // Match NanoClaw behavior: ensure runtime is ready before entering loops.
+  ensureContainerRuntimeReady();
+
   // Initialize database
   initDatabase();
   loadState();
@@ -446,6 +539,10 @@ async function main(): Promise<void> {
       path.join(GROUPS_DIR, group.folder),
       ASSISTANT_NAME,
       group.name,
+    );
+    updateIpcSnapshotsForGroup(
+      group.folder,
+      group.folder === MAIN_GROUP_FOLDER,
     );
   }
   syncSkillsToAllGroups(groupFolders);
@@ -486,10 +583,24 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  // Start Enhanced IPC watcher
-  startEnhancedIPC(async (groupFolder, data) => {
-    logger.info({ groupFolder, data }, 'Received IPC message');
-    // Handle IPC messages (e.g., tasks, admin commands)
+  // Start IPC watcher for task/message/group commands from containers.
+  startIpcWatcher({
+    sendMessage: async (jid, text) => {
+      await whatsapp.sendMessage(jid, text);
+    },
+    registeredGroups: () => registeredGroups,
+    registerGroup,
+    syncGroupMetadata: async (force: boolean) => {
+      await whatsapp.syncGroupMetadata(force);
+      for (const group of Object.values(registeredGroups)) {
+        updateIpcSnapshotsForGroup(
+          group.folder,
+          group.folder === MAIN_GROUP_FOLDER,
+        );
+      }
+    },
+    getAvailableGroups,
+    writeGroupsSnapshot,
   });
 
   // Start task scheduler
@@ -504,10 +615,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Find chat JID for this group
-    const chatJid = Object.keys(registeredGroups).find(
-      (jid) => registeredGroups[jid].folder === task.groupFolder,
-    );
+    // Resolve chat JID for this group
+    const chatJid =
+      task.chatJid ||
+      Object.keys(registeredGroups).find(
+        (jid) => registeredGroups[jid].folder === task.groupFolder,
+      );
     if (!chatJid) {
       logger.warn({ task }, 'Chat JID not found for scheduled task');
       return;

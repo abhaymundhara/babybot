@@ -16,6 +16,9 @@ export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
+export const MAIN_CHAT_JID = process.env.MAIN_CHAT_JID || '__main__';
+export const AUTO_REGISTER_NEW_CHATS =
+  process.env.AUTO_REGISTER_NEW_CHATS === 'true';
 
 // Ollama configuration
 export const OLLAMA_BASE_URL =

@@ -13,34 +13,52 @@ import {
 import {
   detectContainerRuntime,
   ContainerRuntime,
+  ensureContainerRuntimeReady,
 } from '../../src/container-runtime.js';
 
 async function testContainerRuntimeDetection(): Promise<void> {
   console.log('Testing container runtime detection...');
-  
+
   const runtime = detectContainerRuntime();
-  
+
   assert(
     runtime === ContainerRuntime.APPLE_CONTAINER ||
-    runtime === ContainerRuntime.DOCKER ||
-    runtime === ContainerRuntime.NONE,
-    `Runtime should be one of the valid types, got: ${runtime}`
+      runtime === ContainerRuntime.DOCKER ||
+      runtime === ContainerRuntime.NONE,
+    `Runtime should be one of the valid types, got: ${runtime}`,
   );
-  
+
   console.log(`✅ Container runtime detected: ${runtime}`);
 }
 
 async function testForcedRuntime(): Promise<void> {
   console.log('Testing forced runtime selection...');
-  
+
   const originalRuntime = process.env.CONTAINER_RUNTIME;
-  
+
   try {
     process.env.CONTAINER_RUNTIME = 'none';
     const runtime1 = detectContainerRuntime();
     assertEqual(runtime1, ContainerRuntime.NONE, 'Should force to NONE');
-    
+
     console.log('✅ Forced runtime selection works');
+  } finally {
+    if (originalRuntime) {
+      process.env.CONTAINER_RUNTIME = originalRuntime;
+    } else {
+      delete process.env.CONTAINER_RUNTIME;
+    }
+  }
+}
+
+async function testEnsureRuntimeReadyNoopForNone(): Promise<void> {
+  console.log('Testing runtime readiness no-op for none...');
+
+  const originalRuntime = process.env.CONTAINER_RUNTIME;
+  try {
+    process.env.CONTAINER_RUNTIME = 'none';
+    ensureContainerRuntimeReady();
+    console.log('✅ Runtime readiness no-op works for none');
   } finally {
     if (originalRuntime) {
       process.env.CONTAINER_RUNTIME = originalRuntime;
@@ -52,11 +70,12 @@ async function testForcedRuntime(): Promise<void> {
 
 async function runContainerTests(): Promise<void> {
   console.log('\n=== Container Runtime Integration Tests ===\n');
-  
+
   try {
     await testContainerRuntimeDetection();
     await testForcedRuntime();
-    
+    await testEnsureRuntimeReadyNoopForNone();
+
     console.log('\n✅ All container runtime tests passed!\n');
   } catch (error) {
     console.error('\n❌ Container runtime tests failed:', error);

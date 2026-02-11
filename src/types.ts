@@ -17,8 +17,9 @@ export interface RegisteredGroup {
 export interface Task {
   id: number;
   group_folder: string;
+  chat_jid?: string;
   prompt: string;
-  schedule_type: 'cron' | 'once';
+  schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
   status: 'active' | 'paused' | 'completed';
   next_run: string | null;

@@ -6,7 +6,12 @@ import { logger } from './logger.js';
 let schedulerRunning = false;
 
 export function startSchedulerLoop(
-  onTask: (task: { id: number; groupFolder: string; prompt: string }) => Promise<void>,
+  onTask: (task: {
+    id: number;
+    groupFolder: string;
+    prompt: string;
+    chatJid?: string;
+  }) => Promise<void>,
 ): void {
   if (schedulerRunning) {
     logger.debug('Scheduler already running, skipping duplicate start');
@@ -34,6 +39,7 @@ export function startSchedulerLoop(
                 id: task.id,
                 groupFolder: task.group_folder,
                 prompt: task.prompt,
+                chatJid: task.chat_jid || undefined,
               });
 
               // Calculate next run
@@ -60,6 +66,7 @@ export function startSchedulerLoop(
                 id: task.id,
                 groupFolder: task.group_folder,
                 prompt: task.prompt,
+                chatJid: task.chat_jid || undefined,
               });
 
               // Mark as completed
@@ -67,6 +74,35 @@ export function startSchedulerLoop(
               logger.debug({ taskId: task.id }, 'One-time task completed');
             } catch (error) {
               logger.error({ taskId: task.id, error }, 'Error executing one-time task');
+            }
+          }
+        } else if (task.schedule_type === 'interval' && task.next_run) {
+          const nextRun = new Date(task.next_run);
+          if (now >= nextRun) {
+            logger.info({ taskId: task.id, prompt: task.prompt }, 'Executing interval task');
+
+            try {
+              await onTask({
+                id: task.id,
+                groupFolder: task.group_folder,
+                prompt: task.prompt,
+                chatJid: task.chat_jid || undefined,
+              });
+
+              const intervalMs = parseInt(task.schedule_value, 10);
+              if (!Number.isNaN(intervalMs) && intervalMs > 0) {
+                const next = new Date(Date.now() + intervalMs);
+                updateTaskNextRun(task.id, next.toISOString());
+                logger.debug({ taskId: task.id, nextRun: next }, 'Interval task completed, next run scheduled');
+              } else {
+                logger.warn(
+                  { taskId: task.id, scheduleValue: task.schedule_value },
+                  'Invalid interval value, marking task completed',
+                );
+                markTaskCompleted(task.id);
+              }
+            } catch (error) {
+              logger.error({ taskId: task.id, error }, 'Error executing interval task');
             }
           }
         }

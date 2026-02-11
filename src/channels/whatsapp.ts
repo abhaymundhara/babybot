@@ -7,17 +7,31 @@ import makeWASocket, {
 import path from 'path';
 import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
-import { storeChatMetadata, storeMessage } from '../db.js';
+import {
+  getRouterState,
+  setRouterState,
+  storeChatMetadata,
+  storeMessage,
+} from '../db.js';
 import { renderQrInTerminal } from '../qr-terminal.js';
 
 const AUTH_DIR = path.join(process.cwd(), 'auth_info_baileys');
+const GROUP_SYNC_KEY = 'whatsapp_group_sync_last';
+const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export class WhatsAppChannel {
   private sock: WASocket | null = null;
   private connected = false;
+  private groupSyncTimerStarted = false;
 
   async connect(
-    onMessage: (chatJid: string, senderJid: string, senderName: string, text: string, chatName: string) => Promise<void>,
+    onMessage: (
+      chatJid: string,
+      senderJid: string,
+      senderName: string,
+      text: string,
+      chatName: string,
+    ) => Promise<void>,
   ): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
@@ -43,7 +57,8 @@ export class WhatsAppChannel {
         if (connection === 'close') {
           this.connected = false;
           const shouldReconnect =
-            (lastDisconnect?.error as any)?.output?.statusCode !== DisconnectReason.loggedOut;
+            (lastDisconnect?.error as any)?.output?.statusCode !==
+            DisconnectReason.loggedOut;
 
           logger.info(
             { shouldReconnect, error: lastDisconnect?.error },
@@ -56,6 +71,25 @@ export class WhatsAppChannel {
         } else if (connection === 'open') {
           logger.info('WhatsApp connected');
           this.connected = true;
+
+          this.syncGroupMetadata().catch((error) => {
+            logger.warn(
+              { error },
+              'Initial WhatsApp group metadata sync failed',
+            );
+          });
+
+          if (!this.groupSyncTimerStarted) {
+            this.groupSyncTimerStarted = true;
+            setInterval(() => {
+              this.syncGroupMetadata().catch((error) => {
+                logger.warn(
+                  { error },
+                  'Periodic WhatsApp group metadata sync failed',
+                );
+              });
+            }, GROUP_SYNC_INTERVAL_MS);
+          }
         }
       });
 
@@ -66,8 +100,11 @@ export class WhatsAppChannel {
           const chatJid = msg.key.remoteJid;
           if (!chatJid) continue;
 
-          const senderJid = msg.key.fromMe ? this.sock?.user?.id || '' : (msg.key.participant || chatJid);
-          const text = msg.message.conversation ||
+          const senderJid = msg.key.fromMe
+            ? this.sock?.user?.id || ''
+            : msg.key.participant || chatJid;
+          const text =
+            msg.message.conversation ||
             msg.message.extendedTextMessage?.text ||
             '';
 
@@ -75,7 +112,7 @@ export class WhatsAppChannel {
 
           // Get sender name
           const pushName = msg.pushName || 'Unknown';
-          
+
           // Get chat name
           let chatName = pushName;
           if (isJidGroup(chatJid)) {
@@ -94,7 +131,14 @@ export class WhatsAppChannel {
           // Store in database - fromMe messages are from the assistant
           const fromAssistant = msg.key.fromMe || false;
           const senderName = fromAssistant ? ASSISTANT_NAME : pushName;
-          storeMessage(chatJid, senderJid, senderName, text, timestamp, fromAssistant);
+          storeMessage(
+            chatJid,
+            senderJid,
+            senderName,
+            text,
+            timestamp,
+            fromAssistant,
+          );
           storeChatMetadata(chatJid, chatName, timestamp);
 
           // Don't process our own messages
@@ -124,7 +168,14 @@ export class WhatsAppChannel {
 
       // Store our message in database
       const timestamp = new Date().toISOString();
-      storeMessage(jid, this.sock.user?.id || '', ASSISTANT_NAME, text, timestamp, true);
+      storeMessage(
+        jid,
+        this.sock.user?.id || '',
+        ASSISTANT_NAME,
+        text,
+        timestamp,
+        true,
+      );
 
       logger.info({ jid, text: text.slice(0, 100) }, 'Sent message');
     } catch (error) {
@@ -148,5 +199,34 @@ export class WhatsAppChannel {
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  async syncGroupMetadata(force = false): Promise<void> {
+    if (!this.sock || !this.connected) return;
+
+    if (!force) {
+      const lastSync = getRouterState(GROUP_SYNC_KEY);
+      if (lastSync) {
+        const elapsed = Date.now() - new Date(lastSync).getTime();
+        if (elapsed < GROUP_SYNC_INTERVAL_MS) {
+          return;
+        }
+      }
+    }
+
+    logger.info('Syncing WhatsApp group metadata');
+    const groups = await this.sock.groupFetchAllParticipating();
+    const now = new Date().toISOString();
+
+    for (const [jid, metadata] of Object.entries(groups)) {
+      const chatName = metadata?.subject || jid;
+      storeChatMetadata(jid, chatName, now);
+    }
+
+    setRouterState(GROUP_SYNC_KEY, now);
+    logger.info(
+      { groupCount: Object.keys(groups).length },
+      'WhatsApp group metadata synced',
+    );
   }
 }

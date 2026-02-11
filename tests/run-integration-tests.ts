@@ -11,6 +11,7 @@ import { runLlmProviderTests } from './integration/llm-provider.test.js';
 import { runAgentSwarmTests } from './integration/agent-swarm.test.js';
 import { runMemoryContextTests } from './integration/memory-context.test.js';
 import { runConversationContextTests } from './integration/conversation-context.test.js';
+import { runIpcTests } from './integration/ipc.test.js';
 
 async function runAllTests(): Promise<void> {
   console.log('\n╔════════════════════════════════════════════╗');
@@ -30,6 +31,7 @@ async function runAllTests(): Promise<void> {
     { name: 'Mount Security', fn: runMountSecurityTests },
     { name: 'Memory Context', fn: runMemoryContextTests },
     { name: 'Conversation Context', fn: runConversationContextTests },
+    { name: 'IPC', fn: runIpcTests },
     { name: 'Agent Swarms', fn: runAgentSwarmTests },
   ];
 

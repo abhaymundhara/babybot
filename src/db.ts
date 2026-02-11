@@ -56,6 +56,7 @@ export function initDatabase(customDbPath?: string): void {
     CREATE TABLE IF NOT EXISTS tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_folder TEXT NOT NULL,
+      chat_jid TEXT,
       prompt TEXT NOT NULL,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
@@ -74,6 +75,13 @@ export function initDatabase(customDbPath?: string): void {
       last_message_time TEXT NOT NULL
     );
   `);
+
+  // Migration for existing databases.
+  try {
+    db.exec('ALTER TABLE tasks ADD COLUMN chat_jid TEXT');
+  } catch {
+    // Column already exists
+  }
 
   logger.info({ dbPath }, 'Database initialized');
 }
@@ -184,6 +192,10 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   ).run(jid, group.name, group.folder, group.requiresTrigger === false ? 0 : 1);
 }
 
+export function deleteRegisteredGroup(jid: string): void {
+  db.prepare('DELETE FROM registered_groups WHERE jid = ?').run(jid);
+}
+
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const rows = db
     .prepare(
@@ -230,11 +242,95 @@ export function setSession(groupFolder: string, sessionId: string): void {
 export function getAllTasks(): Task[] {
   return db
     .prepare(
-      `SELECT id, group_folder, prompt, schedule_type, schedule_value, status, next_run, created_at, updated_at
+      `SELECT id, group_folder, chat_jid, prompt, schedule_type, schedule_value, status, next_run, created_at, updated_at
        FROM tasks
        ORDER BY created_at DESC`,
     )
     .all() as Task[];
+}
+
+export function getTaskById(taskId: number): Task | undefined {
+  return db
+    .prepare(
+      `SELECT id, group_folder, chat_jid, prompt, schedule_type, schedule_value, status, next_run, created_at, updated_at
+       FROM tasks
+       WHERE id = ?`,
+    )
+    .get(taskId) as Task | undefined;
+}
+
+export function createTask(task: {
+  groupFolder: string;
+  chatJid?: string;
+  prompt: string;
+  scheduleType: 'cron' | 'interval' | 'once';
+  scheduleValue: string;
+  nextRun: string | null;
+  status?: 'active' | 'paused' | 'completed';
+}): number {
+  const result = db
+    .prepare(
+      `INSERT INTO tasks (group_folder, chat_jid, prompt, schedule_type, schedule_value, status, next_run)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      task.groupFolder,
+      task.chatJid || null,
+      task.prompt,
+      task.scheduleType,
+      task.scheduleValue,
+      task.status || 'active',
+      task.nextRun,
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
+export function updateTaskDefinition(
+  taskId: number,
+  updates: {
+    prompt?: string;
+    scheduleType?: 'cron' | 'interval' | 'once';
+    scheduleValue?: string;
+    nextRun?: string | null;
+    status?: 'active' | 'paused' | 'completed';
+    chatJid?: string | null;
+  },
+): void {
+  const fields: string[] = [];
+  const values: Array<string | number | null> = [];
+
+  if (updates.prompt !== undefined) {
+    fields.push('prompt = ?');
+    values.push(updates.prompt);
+  }
+  if (updates.scheduleType !== undefined) {
+    fields.push('schedule_type = ?');
+    values.push(updates.scheduleType);
+  }
+  if (updates.scheduleValue !== undefined) {
+    fields.push('schedule_value = ?');
+    values.push(updates.scheduleValue);
+  }
+  if (updates.nextRun !== undefined) {
+    fields.push('next_run = ?');
+    values.push(updates.nextRun);
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.chatJid !== undefined) {
+    fields.push('chat_jid = ?');
+    values.push(updates.chatJid);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(taskId);
+  db.prepare(
+    `UPDATE tasks SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+  ).run(...values);
 }
 
 export function storeChatMetadata(
@@ -261,8 +357,23 @@ export function updateTaskNextRun(taskId: number, nextRun: string): void {
   ).run(nextRun, taskId);
 }
 
-export function markTaskCompleted(taskId: number): void {
+export function updateTaskStatus(
+  taskId: number,
+  status: 'active' | 'paused' | 'completed',
+): void {
   db.prepare(
     'UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-  ).run('completed', taskId);
+  ).run(status, taskId);
+}
+
+export function deleteTask(taskId: number): void {
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+}
+
+export function deleteTasksForGroup(groupFolder: string): void {
+  db.prepare('DELETE FROM tasks WHERE group_folder = ?').run(groupFolder);
+}
+
+export function markTaskCompleted(taskId: number): void {
+  updateTaskStatus(taskId, 'completed');
 }

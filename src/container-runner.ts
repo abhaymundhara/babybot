@@ -8,7 +8,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { GROUPS_DIR, MOUNT_ALLOWLIST_PATH } from './config.js';
+import { DATA_DIR, GROUPS_DIR, MOUNT_ALLOWLIST_PATH } from './config.js';
 import { ContainerRuntime, getContainerConfig } from './container-runtime.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -49,6 +49,23 @@ interface ContainerEnvVar {
   value: string;
 }
 
+export interface TaskSnapshot {
+  id: number;
+  groupFolder: string;
+  prompt: string;
+  schedule_type: string;
+  schedule_value: string;
+  status: string;
+  next_run: string | null;
+}
+
+export interface AvailableGroup {
+  jid: string;
+  name: string;
+  lastActivity: string;
+  isRegistered: boolean;
+}
+
 /**
  * Build volume mounts for container
  */
@@ -84,6 +101,16 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
       readonly: !isMain,
     });
   }
+
+  // Per-group IPC namespace for message/task tool contracts.
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
+  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  mounts.push({
+    hostPath: groupIpcDir,
+    containerPath: '/workspace/ipc',
+    readonly: false,
+  });
 
   const allowlist = loadMountAllowlist(
     MOUNT_ALLOWLIST_PATH,
@@ -353,4 +380,42 @@ function parseContainerOutput(stdout: string): ContainerOutput {
       error: 'Failed to parse container output',
     };
   }
+}
+
+export function writeTasksSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  tasks: TaskSnapshot[],
+): void {
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const visibleTasks = isMain
+    ? tasks
+    : tasks.filter((task) => task.groupFolder === groupFolder);
+  const outputPath = path.join(groupIpcDir, 'current_tasks.json');
+  fs.writeFileSync(outputPath, JSON.stringify(visibleTasks, null, 2));
+}
+
+export function writeGroupsSnapshot(
+  groupFolder: string,
+  isMain: boolean,
+  groups: AvailableGroup[],
+): void {
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const visibleGroups = isMain ? groups : [];
+  const outputPath = path.join(groupIpcDir, 'available_groups.json');
+  fs.writeFileSync(
+    outputPath,
+    JSON.stringify(
+      {
+        groups: visibleGroups,
+        lastSync: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
 }

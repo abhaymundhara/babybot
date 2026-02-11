@@ -21,3 +21,4 @@ container/agent-runner/package-lock.json
 
 # Test data
 tests/.test-data/
+NANOCLAW_PARITY.md

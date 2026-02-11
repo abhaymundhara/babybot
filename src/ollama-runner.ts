@@ -129,7 +129,17 @@ export function clearSession(sessionId: string): void {
 // Get default system prompt
 export function getSystemPrompt(groupName: string, isMain: boolean): string {
   if (isMain) {
-    return `You are a helpful AI assistant. You can help manage tasks, schedule jobs, and interact with various groups. Your name is ${ASSISTANT_NAME}. Be concise and helpful.`;
+    return `You are a helpful AI assistant. You can help manage tasks, schedule jobs, and interact with various groups. Your name is ${ASSISTANT_NAME}. Be concise and helpful.
+
+Important accuracy rules:
+- Ground follow-up pronouns (he/she/it/they) in the latest conversation context.
+- If the referent is ambiguous, ask a brief clarification question instead of guessing.
+- Never invent personal facts (such as age, location, biography) unless they were explicitly stated in the conversation or memory.`;
   }
-  return `You are a helpful AI assistant in the ${groupName} group. Your name is ${ASSISTANT_NAME}. Be concise and helpful in your responses.`;
+  return `You are a helpful AI assistant in the ${groupName} group. Your name is ${ASSISTANT_NAME}. Be concise and helpful in your responses.
+
+Important accuracy rules:
+- Ground follow-up pronouns (he/she/it/they) in the latest conversation context.
+- If the referent is ambiguous, ask a brief clarification question instead of guessing.
+- Never invent personal facts (such as age, location, biography) unless they were explicitly stated in the conversation or memory.`;
 }
