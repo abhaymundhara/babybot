@@ -422,8 +422,6 @@ See the `examples/agent-swarms/` directory for complete working examples:
 
 - `parallel-processing.ts` - Process multiple items in parallel
 - `complex-delegation.ts` - Break down complex multi-step tasks
-- `research-aggregation.ts` - Research multiple aspects and combine
-- `load-testing.ts` - Performance testing with many agents/tasks
 
 ## References
 
