@@ -32,6 +32,7 @@ import { formatMessages } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { syncSkillsToGroup, listSkills } from './skills.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -72,7 +73,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
-  // Create CLAUDE.md equivalent (memory file)
+  // Create MEMORY.md file
   const memoryFile = path.join(groupDir, 'MEMORY.md');
   if (!fs.existsSync(memoryFile)) {
     fs.writeFileSync(
@@ -80,6 +81,9 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
       `# ${group.name} Memory\n\nThis file stores context and memory for the ${group.name} group.\n`,
     );
   }
+
+  // Sync skills to this group
+  syncSkillsToGroup(group.folder);
 
   logger.info(
     { jid, name: group.name, folder: group.folder },
@@ -290,6 +294,10 @@ async function main(): Promise<void> {
       requiresTrigger: false,
     });
   }
+
+  // Sync skills to all existing groups
+  const skills = listSkills();
+  logger.info({ skillCount: skills.length }, 'Available skills loaded');
 
   // Initialize WhatsApp
   whatsapp = new WhatsAppChannel();
