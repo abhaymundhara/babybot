@@ -1,6 +1,6 @@
 import cronParser from 'cron-parser';
 import { SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { getAllTasks } from './db.js';
+import { getAllTasks, updateTaskNextRun, markTaskCompleted } from './db.js';
 import { logger } from './logger.js';
 
 let schedulerRunning = false;
@@ -44,7 +44,7 @@ export function startSchedulerLoop(
               const next = interval.next().toDate();
 
               // Update next_run in database
-              // This would need a new db function, but for simplicity we'll skip for now
+              updateTaskNextRun(task.id, next.toISOString());
               logger.debug({ taskId: task.id, nextRun: next }, 'Task completed, next run scheduled');
             } catch (error) {
               logger.error({ taskId: task.id, error }, 'Error executing scheduled task');
@@ -63,7 +63,7 @@ export function startSchedulerLoop(
               });
 
               // Mark as completed
-              // This would need a new db function
+              markTaskCompleted(task.id);
               logger.debug({ taskId: task.id }, 'One-time task completed');
             } catch (error) {
               logger.error({ taskId: task.id, error }, 'Error executing one-time task');

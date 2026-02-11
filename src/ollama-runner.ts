@@ -19,6 +19,10 @@ export interface OllamaOutput {
   error?: string;
 }
 
+// Configuration constants
+const MAX_SESSION_MESSAGES = 20;
+const MESSAGES_TO_KEEP = 19;
+
 // Simple session storage (in-memory for now)
 const sessions: Map<string, Array<{ role: string; content: string }>> = new Map();
 
@@ -72,10 +76,10 @@ export async function runOllamaAgent(
       content: assistantMessage,
     });
 
-    // Save session (keep only last 20 messages to avoid memory issues)
-    if (messages.length > 20) {
+    // Save session (keep only last N messages to avoid memory issues)
+    if (messages.length > MAX_SESSION_MESSAGES) {
       const systemMsg = messages[0].role === 'system' ? [messages[0]] : [];
-      messages = [...systemMsg, ...messages.slice(-19)];
+      messages = [...systemMsg, ...messages.slice(-MESSAGES_TO_KEEP)];
     }
     sessions.set(sessionKey, messages);
 

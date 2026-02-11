@@ -211,3 +211,15 @@ export function getAllChats(): ChatMetadata[] {
     )
     .all() as ChatMetadata[];
 }
+
+export function updateTaskNextRun(taskId: number, nextRun: string): void {
+  db.prepare(
+    'UPDATE tasks SET next_run = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+  ).run(nextRun, taskId);
+}
+
+export function markTaskCompleted(taskId: number): void {
+  db.prepare(
+    'UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+  ).run('completed', taskId);
+}
