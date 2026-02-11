@@ -2,8 +2,10 @@
  * Integration Tests for Agent Swarms
  */
 
-import { AgentSwarm, AgentRole, TaskPriority } from '../../src/agent-swarm';
-import { logger } from '../../src/logger';
+process.env.ENABLE_AGENT_SWARMS = 'true';
+process.env.CONTAINER_RUNTIME = 'none';
+
+const { AgentSwarm, AgentRole, TaskPriority } = await import('../../src/agent-swarm');
 
 // Test configuration
 const TEST_GROUP_FOLDER = 'test-group';
@@ -235,7 +237,7 @@ async function testGracefulShutdown(): Promise<void> {
 }
 
 // Run tests if this file is executed directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runAgentSwarmTests()
     .then(() => {
       console.log('✅ All agent swarm tests passed!\n');

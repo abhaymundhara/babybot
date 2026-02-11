@@ -8,9 +8,17 @@ import { ChatMetadata, NewMessage, RegisteredGroup, Task } from './types.js';
 
 let db: Database.Database;
 
-export function initDatabase(): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const dbPath = path.join(DATA_DIR, 'babybot.db');
+export function initDatabase(customDbPath?: string): void {
+  if (db) {
+    try {
+      db.close();
+    } catch {
+      // Ignore close errors when reinitializing during tests
+    }
+  }
+
+  const dbPath = customDbPath || path.join(DATA_DIR, 'babybot.db');
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new Database(dbPath);
 
   db.exec(`
@@ -81,7 +89,14 @@ export function storeMessage(
   db.prepare(
     `INSERT INTO messages (chat_jid, sender_jid, sender_name, content, timestamp, from_assistant)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(chatJid, senderJid, senderName, content, timestamp, fromAssistant ? 1 : 0);
+  ).run(
+    chatJid,
+    senderJid,
+    senderName,
+    content,
+    timestamp,
+    fromAssistant ? 1 : 0,
+  );
 }
 
 export function getNewMessages(
@@ -105,7 +120,8 @@ export function getNewMessages(
     )
     .all(...chatJids, sinceTimestamp) as NewMessage[];
 
-  const newTimestamp = rows.length > 0 ? rows[rows.length - 1].timestamp : sinceTimestamp;
+  const newTimestamp =
+    rows.length > 0 ? rows[rows.length - 1].timestamp : sinceTimestamp;
 
   return { messages: rows, newTimestamp };
 }
@@ -125,6 +141,27 @@ export function getMessagesSince(
        ORDER BY timestamp ASC`,
     )
     .all(chatJid, sinceTimestamp) as NewMessage[];
+}
+
+export function getConversationMessages(
+  chatJid: string,
+  upToTimestamp: string,
+  limit: number,
+): NewMessage[] {
+  const safeLimit = Math.max(1, limit);
+
+  const rows = db
+    .prepare(
+      `SELECT id, chat_jid, sender_jid, sender_name, content, timestamp, from_assistant
+       FROM messages
+       WHERE chat_jid = ?
+         AND timestamp <= ?
+       ORDER BY timestamp DESC
+       LIMIT ?`,
+    )
+    .all(chatJid, upToTimestamp, safeLimit) as NewMessage[];
+
+  return rows.reverse();
 }
 
 export function getRouterState(key: string): string | null {
@@ -149,7 +186,9 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
 
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   const rows = db
-    .prepare('SELECT jid, name, folder, requires_trigger FROM registered_groups')
+    .prepare(
+      'SELECT jid, name, folder, requires_trigger FROM registered_groups',
+    )
     .all() as Array<{
     jid: string;
     name: string;
@@ -198,7 +237,11 @@ export function getAllTasks(): Task[] {
     .all() as Task[];
 }
 
-export function storeChatMetadata(jid: string, name: string, lastMessageTime: string): void {
+export function storeChatMetadata(
+  jid: string,
+  name: string,
+  lastMessageTime: string,
+): void {
   db.prepare(
     'INSERT OR REPLACE INTO chat_metadata (jid, name, last_message_time) VALUES (?, ?, ?)',
   ).run(jid, name, lastMessageTime);

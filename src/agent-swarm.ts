@@ -9,9 +9,11 @@
  */
 
 import { logger } from './logger';
-import { runOllamaAgent } from './ollama-runner';
+import { runDirectAgent } from './direct-runner.js';
 import { runContainerAgent } from './container-runner';
-import { CONTAINER_RUNTIME, ENABLE_AGENT_SWARMS, MAX_SWARM_SIZE } from './config';
+import { ENABLE_AGENT_SWARMS, MAX_SWARM_SIZE } from './config';
+import { getContainerConfig } from './container-runtime.js';
+import { getRuntimeStrategy } from './runtime-strategy.js';
 
 export enum AgentRole {
   ORCHESTRATOR = 'orchestrator',
@@ -55,7 +57,7 @@ export class AgentSwarm {
 
   constructor(maxAgents: number = MAX_SWARM_SIZE) {
     this.maxAgents = maxAgents;
-    this.enabled = ENABLE_AGENT_SWARMS;
+    this.enabled = process.env.ENABLE_AGENT_SWARMS === 'true' || ENABLE_AGENT_SWARMS;
     
     if (!this.enabled) {
       logger.info('Agent swarms disabled');
@@ -191,14 +193,26 @@ export class AgentSwarm {
         isMain: agent.groupFolder === 'main',
       };
 
+      const runtimeConfig = getContainerConfig();
+      const strategy = getRuntimeStrategy(
+        process.env.CONTAINER_RUNTIME,
+        runtimeConfig.runtime,
+      );
       let output;
-      
-      if (CONTAINER_RUNTIME === 'none') {
+
+      if (!strategy.useContainer) {
         // Direct execution
-        output = await runOllamaAgent(group, input);
+        output = await runDirectAgent(group, input);
       } else {
         // Container execution
         output = await runContainerAgent(group, input);
+        if (output.status === 'error' && strategy.allowFallbackToDirect) {
+          logger.warn(
+            { taskId: task.id, agentId: agent.id, error: output.error },
+            'Container execution failed in auto mode, falling back to direct execution',
+          );
+          output = await runDirectAgent(group, input);
+        }
       }
 
       if (output.status === 'success') {

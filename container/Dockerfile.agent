@@ -8,7 +8,7 @@ WORKDIR /app
 COPY container/agent-runner/package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm install --omit=dev --no-audit --no-fund
 
 # Copy built agent runner
 COPY container/agent-runner/dist ./dist

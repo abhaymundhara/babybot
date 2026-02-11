@@ -1,5 +1,7 @@
 # BabyBot - Project Summary
 
+> Status note (2026-02-11): this summary is partially historical. For the current implementation state, rely on `README.md` and `npm test` output.
+
 ## Overview
 
 BabyBot is a personal AI assistant powered by Ollama, inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw). It provides the same core functionality but uses local LLM models instead of cloud-based APIs, ensuring complete privacy and zero API costs.
@@ -41,8 +43,10 @@ BabyBot is a personal AI assistant powered by Ollama, inspired by [NanoClaw](htt
 6. **Infrastructure**
    - TypeScript codebase with full type safety
    - Docker support for containerized deployment
+   - Container runtime detection (Apple Container / Docker / None)
    - Comprehensive logging with Pino
    - IPC system for inter-process communication
+   - Agent swarm orchestration module
 
 ### 🚧 Planned Features
 
@@ -51,17 +55,12 @@ BabyBot is a personal AI assistant powered by Ollama, inspired by [NanoClaw](htt
    - Task templates
    - Conditional task execution
 
-2. **Agent Swarms**
-   - Multi-agent collaboration (like NanoClaw)
-   - Specialized sub-agents
-   - Task delegation
-
-3. **Additional Channels**
+2. **Additional Channels**
    - Telegram integration
    - Discord integration
    - Slack integration
 
-4. **Web Interface**
+3. **Web Interface**
    - Management dashboard
    - Configuration UI
    - Chat history viewer

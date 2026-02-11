@@ -29,8 +29,13 @@ interface AgentOutput {
   error?: string;
 }
 
+type SessionMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+};
+
 // Session storage
-const sessions: Map<string, Array<{ role: string; content: string }>> = new Map();
+const sessions: Map<string, SessionMessage[]> = new Map();
 
 const MAX_SESSION_MESSAGES = 20;
 const MESSAGES_TO_KEEP = 19;
@@ -43,12 +48,41 @@ function sendOutput(output: AgentOutput): void {
   console.log(`${OUTPUT_START_MARKER}${json}${OUTPUT_END_MARKER}`);
 }
 
+function extractOpenRouterMessage(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (typeof part === 'object' && part !== null && 'text' in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === 'string' ? text : '';
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+
+  return '';
+}
+
 /**
  * Main agent execution
  */
 async function runAgent(input: AgentInput): Promise<void> {
+  const provider = (process.env.LLM_PROVIDER || 'ollama').trim().toLowerCase();
   const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434';
-  const model = process.env.OLLAMA_MODEL || 'llama2';
+  const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+  const openRouterBaseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+  const openRouterModel = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+  const openRouterKey = process.env.OPENROUTER_API_KEY || '';
+  const openRouterSiteUrl = process.env.OPENROUTER_SITE_URL || '';
+  const openRouterAppName = process.env.OPENROUTER_APP_NAME || 'BabyBot';
 
   const ollama = new Ollama({ host: ollamaUrl });
 
@@ -71,14 +105,59 @@ async function runAgent(input: AgentInput): Promise<void> {
       content: input.prompt,
     });
 
-    // Call Ollama
-    const response = await ollama.chat({
-      model,
-      messages: messages.map((m) => ({ role: m.role as any, content: m.content })),
-      stream: false,
-    });
+    let assistantMessage = '';
 
-    const assistantMessage = response.message.content;
+    if (provider === 'openrouter') {
+      if (!openRouterKey) {
+        throw new Error('OPENROUTER_API_KEY is not set');
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${openRouterKey}`,
+        'Content-Type': 'application/json',
+      };
+
+      if (openRouterSiteUrl) {
+        headers['HTTP-Referer'] = openRouterSiteUrl;
+      }
+
+      if (openRouterAppName) {
+        headers['X-Title'] = openRouterAppName;
+      }
+
+      const response = await fetch(`${openRouterBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: openRouterModel,
+          messages,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`OpenRouter request failed (${response.status}): ${body.slice(0, 500)}`);
+      }
+
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: unknown } }>;
+      };
+
+      assistantMessage = extractOpenRouterMessage(data.choices?.[0]?.message?.content);
+      if (!assistantMessage) {
+        throw new Error('OpenRouter returned empty content');
+      }
+    } else {
+      // Default to Ollama
+      const response = await ollama.chat({
+        model: ollamaModel,
+        messages: messages.map((m) => ({ role: m.role as any, content: m.content })),
+        stream: false,
+      });
+
+      assistantMessage = response.message.content;
+    }
 
     // Add assistant response to session
     messages.push({
@@ -127,7 +206,7 @@ function readStdin(): Promise<string> {
 /**
  * Main entry point
  */
-async function main(): void {
+async function main(): Promise<void> {
   try {
     const inputStr = await readStdin();
     const input: AgentInput = JSON.parse(inputStr);

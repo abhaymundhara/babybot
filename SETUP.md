@@ -3,20 +3,22 @@
 ## Prerequisites
 
 1. **Node.js 20+**
+
    ```bash
    node --version  # Should be 20.x or higher
    ```
 
 2. **Ollama**
+
    ```bash
    # Install Ollama
    curl -fsSL https://ollama.ai/install.sh | sh
-   
+
    # Pull a model (choose one)
    ollama pull llama2        # Recommended for general use (3.8GB)
    ollama pull mistral       # Fast and accurate (4.1GB)
    ollama pull codellama     # For code-related tasks (3.8GB)
-   
+
    # Verify Ollama is running
    ollama list
    ```
@@ -43,6 +45,7 @@ cp .env.example .env
 ```
 
 Edit `.env` and set your preferences:
+
 ```bash
 # Change the assistant name (optional)
 ASSISTANT_NAME=Baby
@@ -62,6 +65,7 @@ npm run auth
 ```
 
 This will display a QR code in your terminal. Scan it with WhatsApp on your phone:
+
 1. Open WhatsApp on your phone
 2. Go to Settings → Linked Devices
 3. Click "Link a Device"
@@ -76,6 +80,7 @@ npm start
 ```
 
 Or for development with auto-reload:
+
 ```bash
 npm run dev
 ```
@@ -97,26 +102,31 @@ By default, only the "main" group (your self-chat) is registered. To use the bot
 
 ### System Prompts and Memory
 
-Each group gets its own `MEMORY.md` file in `groups/<group-folder>/MEMORY.md`. You can edit this file to:
+Each group gets its own `CLAUDE.md` file in `groups/<group-folder>/CLAUDE.md` (legacy `MEMORY.md` is still read as fallback). You can edit this file to:
+
 - Add context about the group
 - Set preferences for how the bot should respond
 - Store important information
 
-Example `MEMORY.md`:
+Example `CLAUDE.md`:
+
 ```markdown
 # Family Chat Memory
 
 This is a family group chat. Members:
+
 - Dad (John)
 - Mom (Sarah)
 - Kids (Emma, Noah)
 
 Preferences:
+
 - Keep responses friendly and casual
 - Remember birthdays and anniversaries
 - Help with family scheduling
 
 Important Dates:
+
 - Dad's birthday: June 15
 - Mom's birthday: March 22
 ```
@@ -138,6 +148,7 @@ ollama serve
 ### WhatsApp Disconnects
 
 If WhatsApp keeps disconnecting:
+
 1. Delete the `auth_info_baileys` folder
 2. Run `npm run auth` again
 3. Make sure you're not using the same WhatsApp account elsewhere
@@ -152,6 +163,7 @@ If WhatsApp keeps disconnecting:
 ### Out of Memory
 
 If you see memory errors:
+
 1. Use a smaller model (e.g., `llama2` instead of `llama2:13b`)
 2. Reduce `MAX_CONCURRENT_CONTAINERS` in `.env`
 3. Clear old session data from `data/sessions/`
@@ -175,6 +187,7 @@ OLLAMA_MODEL=mistral
 ### Multiple Concurrent Conversations
 
 Edit `.env`:
+
 ```bash
 MAX_CONCURRENT_CONTAINERS=10
 ```
@@ -209,7 +222,8 @@ babybot-/
 │   └── sessions/            # Chat sessions
 ├── groups/                   # Group folders (git-ignored)
 │   └── main/
-│       └── MEMORY.md        # Main group memory
+│       ├── CLAUDE.md        # Main group memory (preferred)
+│       └── MEMORY.md        # Legacy memory fallback
 └── auth_info_baileys/       # WhatsApp auth (git-ignored)
 ```
 
@@ -233,6 +247,6 @@ npm run format
 
 ## What's Next?
 
-- Add more groups and customize their MEMORY.md files
+- Add more groups and customize their CLAUDE.md files
 - Experiment with different Ollama models
 - Check out the roadmap in README.md for upcoming features

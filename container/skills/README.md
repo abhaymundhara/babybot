@@ -4,7 +4,7 @@ BabyBot supports a skills system where you can teach the assistant how to modify
 
 ## How Skills Work
 
-Skills are stored in `container/skills/` and synced to each group's context. When you run a skill command (e.g., `/add-telegram`), the assistant reads the skill instructions and applies the changes to the codebase.
+Skills are stored in `container/skills/` and synced to each group's context at `groups/<group>/.claude/skills` (with legacy mirror at `.skills`). When you use a skill command (e.g., `/add-telegram`), the message is routed through the agent and the matching skill context is attached.
 
 ## Creating Skills
 
@@ -12,11 +12,41 @@ Each skill is a directory containing a `SKILL.md` file:
 
 ```
 container/skills/
-├── add-telegram/
+├── add-clear/
 │   └── SKILL.md
 ├── add-discord/
 │   └── SKILL.md
-└── setup-apple-container/
+├── add-gmail/
+│   └── SKILL.md
+├── add-memory/
+│   └── SKILL.md
+├── add-parallel/
+│   └── SKILL.md
+├── add-slack/
+│   └── SKILL.md
+├── add-telegram/
+│   └── SKILL.md
+├── add-telegram-swarm/
+│   └── SKILL.md
+├── add-voice-transcription/
+│   └── SKILL.md
+├── agent-browser/
+│   └── SKILL.md
+├── convert-to-docker/
+│   └── SKILL.md
+├── customize/
+│   └── SKILL.md
+├── debug/
+│   └── SKILL.md
+├── example-skill/
+│   └── SKILL.md
+├── setup/
+│   └── SKILL.md
+├── setup-apple-container/
+│   └── SKILL.md
+├── setup-windows/
+│   └── SKILL.md
+└── x-integration/
     └── SKILL.md
 ```
 
@@ -37,24 +67,39 @@ See `container/skills/example-skill/SKILL.md` for a template.
 ## Available Skills
 
 ### Communication Channels
+
 - `/add-telegram` - Add Telegram bot integration
+- `/add-telegram-swarm` - Add Telegram swarm workflow
 - `/add-discord` - Add Discord bot integration
 - `/add-slack` - Add Slack bot integration
+- `/add-gmail` - Add Gmail integration
+- `/x-integration` - Add X/Twitter integration
 
 ### Platform Support
+
+- `/setup` - Project setup/bootstrap skill
 - `/setup-apple-container` - Configure Apple Container runtime
 - `/convert-to-docker` - Switch to Docker runtime
 - `/setup-windows` - Setup on Windows with WSL2
+- `/agent-browser` - Browser automation helper skill
 
 ### Session Management
+
 - `/add-clear` - Add conversation compaction
-- `/enhance-memory` - Improve memory management
+- `/add-memory` - Improve memory management
+
+### Productivity & Development
+
+- `/add-parallel` - Parallel execution workflow
+- `/add-voice-transcription` - Voice transcription flow
+- `/customize` - Customize behavior/configuration
+- `/debug` - Debug workflow guidance
 
 ## Using Skills
 
 1. **List available skills**: Send `/list-skills` to the assistant
-2. **Apply a skill**: Send `/skill-name` (e.g., `/add-telegram`)
-3. **Follow instructions**: The assistant will guide you through the process
+2. **Invoke a skill**: Send `/skill-name` (e.g., `/add-telegram`)
+3. **Agent execution**: The agent receives the matching `SKILL.md` context
 4. **Verify**: Test the new functionality
 
 ## Contributing Skills
@@ -67,6 +112,7 @@ To contribute a new skill:
 4. Submit a pull request
 
 Skills should:
+
 - Be self-contained and focused
 - Include prerequisite checks
 - Provide clear error messages

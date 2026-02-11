@@ -4,20 +4,22 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CONVERSATION_CONTEXT_WINDOW,
   GROUPS_DIR,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
-import {
-  runOllamaAgent,
-  getSystemPrompt,
-  OllamaOutput,
-} from './ollama-runner.js';
+import { getSystemPrompt, OllamaOutput } from './ollama-runner.js';
+import { runDirectAgent } from './direct-runner.js';
+import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { getContainerConfig } from './container-runtime.js';
+import { getRuntimeStrategy } from './runtime-strategy.js';
 import {
   getAllRegisteredGroups,
   getAllSessions,
+  getConversationMessages,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -32,7 +34,21 @@ import { formatMessages } from './router.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
-import { syncSkillsToGroup, listSkills } from './skills.js';
+import {
+  ensureGlobalMemoryFiles,
+  ensureGroupMemoryFiles,
+  loadMemoryContext,
+} from './memory-context.js';
+import {
+  syncSkillsToGroup,
+  listSkills,
+  syncSkillsToAllGroups,
+} from './skills.js';
+import {
+  formatSkillsListMessage,
+  extractSkillInvocations,
+  parseHostSkillCommand,
+} from './skill-commands.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -73,14 +89,8 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
-  // Create MEMORY.md file
-  const memoryFile = path.join(groupDir, 'MEMORY.md');
-  if (!fs.existsSync(memoryFile)) {
-    fs.writeFileSync(
-      memoryFile,
-      `# ${group.name} Memory\n\nThis file stores context and memory for the ${group.name} group.\n`,
-    );
-  }
+  // Create CLAUDE.md + legacy MEMORY.md defaults
+  ensureGroupMemoryFiles(groupDir, ASSISTANT_NAME, group.name);
 
   // Sync skills to this group
   syncSkillsToGroup(group.folder);
@@ -91,6 +101,82 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+async function handleHostSkillCommand(chatJid: string): Promise<void> {
+  const skills = listSkills();
+  await whatsapp.sendMessage(chatJid, formatSkillsListMessage(skills));
+}
+
+function getRequestedSkillsFromMessages(messages: NewMessage[]): string[] {
+  const availableSkills = listSkills();
+  if (availableSkills.length === 0) return [];
+
+  const requested = new Set<string>();
+  for (const message of messages) {
+    const invocations = extractSkillInvocations(
+      message.content,
+      availableSkills,
+    );
+    for (const skillName of invocations) {
+      requested.add(skillName);
+    }
+  }
+
+  return Array.from(requested);
+}
+
+function buildSkillContextPrompt(requestedSkills: string[]): string {
+  if (requestedSkills.length === 0) return '';
+
+  const maxSkills = 2;
+  const maxCharsPerSkill = 8000;
+  const sections: string[] = [];
+
+  for (const skillName of requestedSkills.slice(0, maxSkills)) {
+    const skillFile = path.join(
+      process.cwd(),
+      'container',
+      'skills',
+      skillName,
+      'SKILL.md',
+    );
+
+    if (!fs.existsSync(skillFile)) continue;
+    const raw = fs.readFileSync(skillFile, 'utf-8');
+    const content =
+      raw.length > maxCharsPerSkill
+        ? `${raw.slice(0, maxCharsPerSkill)}\n\n[truncated by BabyBot]`
+        : raw;
+    sections.push(`## Skill /${skillName}\n${content}`);
+  }
+
+  if (sections.length === 0) return '';
+
+  return [
+    'Skill Context:',
+    'If user intent matches these skills, follow them as implementation instructions.',
+    ...sections,
+  ].join('\n\n');
+}
+
+async function maybeHandleHostSkillCommand(
+  chatJid: string,
+  messages: NewMessage[],
+): Promise<boolean> {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const command = parseHostSkillCommand(messages[i].content);
+    if (!command) continue;
+
+    if (command.type === 'list-skills') {
+      lastAgentTimestamp[chatJid] = messages[messages.length - 1].timestamp;
+      saveState();
+      await handleHostSkillCommand(chatJid);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
@@ -98,46 +184,75 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+  const missedMessages = getMessagesSince(
+    chatJid,
+    sinceTimestamp,
+    ASSISTANT_NAME,
+  );
 
   if (missedMessages.length === 0) return true;
 
+  if (await maybeHandleHostSkillCommand(chatJid, missedMessages)) {
+    return true;
+  }
+
+  const requestedSkills = getRequestedSkillsFromMessages(missedMessages);
+  const hasSkillInvocation = requestedSkills.length > 0;
+
   // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  if (!isMainGroup && group.requiresTrigger !== false && !hasSkillInvocation) {
     const hasTrigger = missedMessages.some((m) =>
       TRIGGER_PATTERN.test(m.content.trim()),
     );
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
+  const latestMessageTimestamp =
+    missedMessages[missedMessages.length - 1].timestamp;
+  const promptMessages = getConversationMessages(
+    chatJid,
+    latestMessageTimestamp,
+    CONVERSATION_CONTEXT_WINDOW,
+  );
+  const prompt = formatMessages(
+    promptMessages.length > 0 ? promptMessages : missedMessages,
+  );
 
   // Advance cursor
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] = missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentTimestamp[chatJid] = latestMessageTimestamp;
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: missedMessages.length, requestedSkills },
     'Processing messages',
   );
 
   await whatsapp.setTyping(chatJid, true);
   let hadError = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    if (result.result) {
-      const text = result.result.trim();
-      logger.info({ group: group.name }, `Agent output: ${text.slice(0, 200)}`);
-      if (text) {
-        await whatsapp.sendMessage(chatJid, text);
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    requestedSkills,
+    async (result) => {
+      if (result.result) {
+        const text = result.result.trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${text.slice(0, 200)}`,
+        );
+        if (text) {
+          await whatsapp.sendMessage(chatJid, text);
+        }
       }
-    }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await whatsapp.setTyping(chatJid, false);
 
@@ -158,25 +273,23 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
-  onOutput?: (output: OllamaOutput) => Promise<void>,
+  requestedSkills: string[] = [],
+  onOutput?: (output: OllamaOutput | ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
 
-  // Read memory file if exists
-  const memoryFile = path.join(GROUPS_DIR, group.folder, 'MEMORY.md');
-  let memoryContext = '';
-  if (fs.existsSync(memoryFile)) {
-    memoryContext = fs.readFileSync(memoryFile, 'utf-8');
-  }
+  const memoryContext = loadMemoryContext(GROUPS_DIR, group.folder);
 
   // Build system prompt with memory
+  const skillContext = buildSkillContextPrompt(requestedSkills);
   const systemPrompt =
     getSystemPrompt(group.name, isMain) +
-    (memoryContext ? `\n\nMemory/Context:\n${memoryContext}` : '');
+    (memoryContext ? `\n\nMemory/Context:\n${memoryContext}` : '') +
+    (skillContext ? `\n\n${skillContext}` : '');
 
   const wrappedOnOutput = onOutput
-    ? async (output: OllamaOutput) => {
+    ? async (output: OllamaOutput | ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
@@ -186,18 +299,40 @@ async function runAgent(
     : undefined;
 
   try {
-    const output = await runOllamaAgent(
-      group,
-      {
-        prompt,
-        sessionId,
-        groupFolder: group.folder,
-        chatJid,
-        isMain,
-        systemPrompt,
-      },
-      wrappedOnOutput,
+    const input = {
+      prompt,
+      sessionId,
+      groupFolder: group.folder,
+      chatJid,
+      isMain,
+      systemPrompt,
+    };
+
+    const runtimeConfig = getContainerConfig();
+    const strategy = getRuntimeStrategy(
+      process.env.CONTAINER_RUNTIME,
+      runtimeConfig.runtime,
     );
+
+    let output: OllamaOutput | ContainerOutput;
+
+    if (strategy.useContainer) {
+      output = await runContainerAgent(
+        group,
+        input,
+        undefined,
+        wrappedOnOutput,
+      );
+      if (output.status === 'error' && strategy.allowFallbackToDirect) {
+        logger.warn(
+          { group: group.name, error: output.error },
+          'Container execution failed in auto mode, falling back to direct provider execution',
+        );
+        output = await runDirectAgent(group, input, wrappedOnOutput);
+      }
+    } else {
+      output = await runDirectAgent(group, input, wrappedOnOutput);
+    }
 
     if (output.newSessionId) {
       sessions[group.folder] = output.newSessionId;
@@ -262,7 +397,12 @@ async function startMessageLoop(): Promise<void> {
             const hasTrigger = groupMessages.some((m) =>
               TRIGGER_PATTERN.test(m.content.trim()),
             );
-            if (!hasTrigger) continue;
+            const availableSkills = listSkills();
+            const hasSkillInvocation = groupMessages.some(
+              (m) =>
+                extractSkillInvocations(m.content, availableSkills).length > 0,
+            );
+            if (!hasTrigger && !hasSkillInvocation) continue;
           }
 
           // Enqueue processing
@@ -284,6 +424,7 @@ async function main(): Promise<void> {
   // Initialize database
   initDatabase();
   loadState();
+  ensureGlobalMemoryFiles(GROUPS_DIR, ASSISTANT_NAME);
 
   // Create main group if not exists
   const mainJid = '__main__';
@@ -297,35 +438,48 @@ async function main(): Promise<void> {
 
   // Sync skills to all existing groups
   const skills = listSkills();
+  const groupFolders = [
+    ...new Set(Object.values(registeredGroups).map((g) => g.folder)),
+  ];
+  for (const group of Object.values(registeredGroups)) {
+    ensureGroupMemoryFiles(
+      path.join(GROUPS_DIR, group.folder),
+      ASSISTANT_NAME,
+      group.name,
+    );
+  }
+  syncSkillsToAllGroups(groupFolders);
   logger.info({ skillCount: skills.length }, 'Available skills loaded');
 
   // Initialize WhatsApp
   whatsapp = new WhatsAppChannel();
 
-  await whatsapp.connect(async (chatJid, senderJid, senderName, text, chatName) => {
-    // Auto-register new chats/groups on first inbound message
-    if (!registeredGroups[chatJid]) {
-      // Derive a filesystem-safe folder name from the chat JID
-      const safeFolder = chatJid.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  await whatsapp.connect(
+    async (chatJid, senderJid, senderName, text, chatName) => {
+      // Auto-register new chats/groups on first inbound message
+      if (!registeredGroups[chatJid]) {
+        // Derive a filesystem-safe folder name from the chat JID
+        const safeFolder = chatJid.replace(/[^a-zA-Z0-9_\-]/g, '_');
 
-      // Use the actual chat name from WhatsApp, or fallback to sender name for DMs
-      const groupName = chatJid.endsWith('@g.us') 
-        ? chatName 
-        : `Chat with ${senderName}`;
+        // Use the actual chat name from WhatsApp, or fallback to sender name for DMs
+        const groupName = chatJid.endsWith('@g.us')
+          ? chatName
+          : `Chat with ${senderName}`;
 
-      logger.info(
-        { chatJid, groupName, folder: safeFolder },
-        'Auto-registering new chat/group',
-      );
+        logger.info(
+          { chatJid, groupName, folder: safeFolder },
+          'Auto-registering new chat/group',
+        );
 
-      registerGroup(chatJid, {
-        name: groupName,
-        folder: safeFolder,
-        // Require trigger word for auto-created groups to avoid unsolicited responses
-        requiresTrigger: true,
-      });
-    }
-  });
+        registerGroup(chatJid, {
+          name: groupName,
+          folder: safeFolder,
+          // Require trigger word for auto-created groups to avoid unsolicited responses
+          requiresTrigger: true,
+        });
+      }
+    },
+  );
 
   // Wait for connection
   while (!whatsapp.isConnected()) {
@@ -360,16 +514,11 @@ async function main(): Promise<void> {
     }
 
     // Run the task
-    await runAgent(
-      group,
-      task.prompt,
-      chatJid,
-      async (result) => {
-        if (result.result && chatJid !== '__main__') {
-          await whatsapp.sendMessage(chatJid, result.result);
-        }
-      },
-    );
+    await runAgent(group, task.prompt, chatJid, [], async (result) => {
+      if (result.result && chatJid !== '__main__') {
+        await whatsapp.sendMessage(chatJid, result.result);
+      }
+    });
   });
 
   // Start message processing loop

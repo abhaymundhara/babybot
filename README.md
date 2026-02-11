@@ -2,26 +2,30 @@
 
 [![Ollama](https://img.shields.io/badge/Powered%20by-Ollama-blue)](https://ollama.ai/)
 
-Your personal AI assistant powered by Ollama. Lightweight, secure, and runs completely locally with your own LLM models.
+Your personal AI assistant with pluggable LLM providers (Ollama by default, OpenRouter optional). Lightweight, secure, and easy to self-host.
 
 ## Why BabyBot?
 
-Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw), BabyBot brings you the same core functionality but with **complete local control** using Ollama models instead of cloud-based APIs. This means:
+Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw), BabyBot brings you the same core functionality with flexible provider choice. This means:
 
-- ✅ **100% Local** - All AI processing happens on your machine
-- ✅ **Privacy First** - Your data never leaves your device
-- ✅ **Model Freedom** - Use any Ollama model (Llama 2, Mistral, CodeLlama, etc.)
-- ✅ **Cost-Free** - No API costs, runs entirely offline
+- ✅ **Local by Default** - Use Ollama for on-device inference
+- ✅ **Provider Flexibility** - Switch to OpenRouter when you need cloud models
+- ✅ **Model Freedom** - Use Ollama models or OpenRouter-hosted models
+- ✅ **Cost Control** - Run free/local with Ollama, or pay-per-use via OpenRouter
 - ✅ **Simple Architecture** - One process, easy to understand codebase
 
 ## Features
 
 - 🔐 **WhatsApp Integration** - Message your assistant from your phone
+- 🧠 **Provider Selection** - Use Ollama (local) or OpenRouter (cloud) via config
+- 📦 **Container Runtime Support** - Auto-detect Apple Container/Docker with direct fallback
 - 👥 **Isolated Group Context** - Each group has its own memory and context
 - ⏰ **Scheduled Tasks** - Recurring jobs that run automatically
+- 🧩 **Agent Skill Calls** - Skills are synced NanoClaw-style and `/<skill-name>` is routed to the agent (use `/list-skills` to discover)
 - 🎯 **Trigger-based Responses** - Control when the bot responds with `@Baby`
-- 📝 **Persistent Memory** - Each group maintains its own MEMORY.md file
+- 📝 **Persistent Memory** - Each group maintains `CLAUDE.md` memory (with `MEMORY.md` legacy fallback)
 - 🔄 **Session Management** - Conversations maintain context across messages
+- 🤝 **Agent Swarms (Experimental)** - Multi-agent task orchestration and delegation
 
 ## Requirements
 
@@ -99,9 +103,16 @@ Edit `.env` to customize:
 # Assistant name (trigger word will be @YourName)
 ASSISTANT_NAME=Baby
 
-# Ollama configuration
+# LLM provider (ollama or openrouter)
+LLM_PROVIDER=ollama
+
+# Ollama configuration (used when LLM_PROVIDER=ollama)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama2
+
+# OpenRouter configuration (used when LLM_PROVIDER=openrouter)
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_MODEL=openai/gpt-4o-mini
 
 # Logging
 LOG_LEVEL=info
@@ -111,13 +122,13 @@ LOG_LEVEL=info
 
 BabyBot works with any Ollama model. Some popular choices:
 
-| Model | Size | Best For |
-|-------|------|----------|
-| `llama2` | 7B | General conversation |
-| `mistral` | 7B | Fast, accurate responses |
-| `codellama` | 7B | Code-related tasks |
-| `llama2:13b` | 13B | More capable responses (slower) |
-| `neural-chat` | 7B | Conversational AI |
+| Model         | Size | Best For                        |
+| ------------- | ---- | ------------------------------- |
+| `llama2`      | 7B   | General conversation            |
+| `mistral`     | 7B   | Fast, accurate responses        |
+| `codellama`   | 7B   | Code-related tasks              |
+| `llama2:13b`  | 13B  | More capable responses (slower) |
+| `neural-chat` | 7B   | Conversational AI               |
 
 Change models anytime:
 
@@ -162,23 +173,25 @@ npm run build
 
 ## Differences from NanoClaw
 
-| Feature | NanoClaw | BabyBot |
-|---------|----------|---------|
-| AI Backend | Anthropic Claude (cloud) | Ollama (local) |
-| Container Runtime | Apple Container/Docker | Simplified (no containers by default) |
-| Agent Swarms | ✅ Yes | ⚠️ Planned |
-| Cost | Pay-per-token | Free |
-| Privacy | Data sent to Anthropic | 100% local |
-| Setup | Complex container setup | Simple npm install |
+| Feature           | NanoClaw                 | BabyBot                       |
+| ----------------- | ------------------------ | ----------------------------- |
+| AI Backend        | Anthropic Claude (cloud) | Ollama (local) or OpenRouter  |
+| Container Runtime | Apple Container/Docker   | Apple Container/Docker/Direct |
+| Agent Swarms      | ✅ Yes                   | ✅ Experimental               |
+| Cost              | Pay-per-token            | Free                          |
+| Privacy           | Data sent to Anthropic   | 100% local                    |
+| Setup             | Complex container setup  | Simple npm install            |
 
 ## Roadmap
 
-- [ ] Docker container support for sandboxed execution
-- [ ] Agent swarms for collaborative tasks
+- [x] Docker/Apple Container support for sandboxed execution
+- [x] Agent swarms foundation for collaborative tasks
+- [x] NanoClaw-style agent skill invocation with `/list-skills` discovery
 - [ ] Web interface for management
-- [ ] Telegram integration
-- [ ] Discord integration
+- [ ] Telegram channel runtime integration
+- [ ] Discord channel runtime integration
 - [ ] More advanced scheduling options
+- [ ] Persistent conversation state across restarts
 
 ## Contributing
 

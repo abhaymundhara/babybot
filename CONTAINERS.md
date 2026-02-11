@@ -77,6 +77,10 @@ CONTAINER_TIMEOUT=1800000
 
 # Maximum output size (bytes)
 CONTAINER_MAX_OUTPUT_SIZE=10485760
+
+# Optional path to mount allowlist JSON
+# (defaults to ~/.config/babybot/mount-allowlist.json)
+MOUNT_ALLOWLIST_PATH=/Users/your-user/.config/babybot/mount-allowlist.json
 ```
 
 ### Runtime Detection

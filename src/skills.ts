@@ -1,6 +1,6 @@
 /**
  * Skills System
- * 
+ *
  * Loads and syncs skills from container/skills/ to group contexts.
  */
 
@@ -10,21 +10,50 @@ import { GROUPS_DIR } from './config.js';
 import { logger } from './logger.js';
 
 const SKILLS_SOURCE_DIR = path.join(process.cwd(), 'container', 'skills');
+const CLAUDE_SKILLS_RELATIVE_DIR = path.join('.claude', 'skills');
+const LEGACY_SKILLS_RELATIVE_DIR = '.skills';
+
+function copyDirectoryRecursive(
+  sourceDir: string,
+  destinationDir: string,
+): void {
+  fs.mkdirSync(destinationDir, { recursive: true });
+
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destinationPath = path.join(destinationDir, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(sourcePath, destinationPath);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      fs.copyFileSync(sourcePath, destinationPath);
+    }
+  }
+}
 
 /**
  * Sync skills to a group's context
  */
 export function syncSkillsToGroup(groupFolder: string): void {
   if (!fs.existsSync(SKILLS_SOURCE_DIR)) {
-    logger.warn({ source: SKILLS_SOURCE_DIR }, 'Skills source directory not found');
+    logger.warn(
+      { source: SKILLS_SOURCE_DIR },
+      'Skills source directory not found',
+    );
     return;
   }
 
   const groupDir = path.join(GROUPS_DIR, groupFolder);
-  const skillsDestDir = path.join(groupDir, '.skills');
+  const claudeSkillsDestDir = path.join(groupDir, CLAUDE_SKILLS_RELATIVE_DIR);
+  const legacySkillsDestDir = path.join(groupDir, LEGACY_SKILLS_RELATIVE_DIR);
 
-  // Create skills directory
-  fs.mkdirSync(skillsDestDir, { recursive: true });
+  // NanoClaw-compatible skills path
+  fs.mkdirSync(claudeSkillsDestDir, { recursive: true });
+  // Backward-compatible mirror path for existing setups
+  fs.mkdirSync(legacySkillsDestDir, { recursive: true });
 
   // Read all skills
   const skillDirs = fs.readdirSync(SKILLS_SOURCE_DIR).filter((name) => {
@@ -40,30 +69,10 @@ export function syncSkillsToGroup(groupFolder: string): void {
   // Copy each skill
   for (const skillDir of skillDirs) {
     const sourcePath = path.join(SKILLS_SOURCE_DIR, skillDir);
-    const destPath = path.join(skillsDestDir, skillDir);
-
-    // Create destination directory
-    fs.mkdirSync(destPath, { recursive: true });
-
-    // Copy SKILL.md file
-    const skillFile = path.join(sourcePath, 'SKILL.md');
-    if (fs.existsSync(skillFile)) {
-      const destFile = path.join(destPath, 'SKILL.md');
-      fs.copyFileSync(skillFile, destFile);
-    }
-
-    // Copy any other files
-    const files = fs.readdirSync(sourcePath);
-    for (const file of files) {
-      if (file === 'SKILL.md') continue; // Already copied
-      
-      const srcFile = path.join(sourcePath, file);
-      const dstFile = path.join(destPath, file);
-      
-      if (fs.statSync(srcFile).isFile()) {
-        fs.copyFileSync(srcFile, dstFile);
-      }
-    }
+    const claudeDestination = path.join(claudeSkillsDestDir, skillDir);
+    const legacyDestination = path.join(legacySkillsDestDir, skillDir);
+    copyDirectoryRecursive(sourcePath, claudeDestination);
+    copyDirectoryRecursive(sourcePath, legacyDestination);
   }
 
   logger.info(
@@ -95,7 +104,7 @@ export function listSkills(): string[] {
  */
 export function getSkillContent(skillName: string): string | null {
   const skillPath = path.join(SKILLS_SOURCE_DIR, skillName, 'SKILL.md');
-  
+
   if (!fs.existsSync(skillPath)) {
     return null;
   }
@@ -107,16 +116,16 @@ export function getSkillContent(skillName: string): string | null {
  * Sync skills to all registered groups
  */
 export function syncSkillsToAllGroups(groupFolders: string[]): void {
-  logger.info({ groupCount: groupFolders.length }, 'Syncing skills to all groups');
-  
+  logger.info(
+    { groupCount: groupFolders.length },
+    'Syncing skills to all groups',
+  );
+
   for (const groupFolder of groupFolders) {
     try {
       syncSkillsToGroup(groupFolder);
     } catch (error) {
-      logger.error(
-        { groupFolder, error },
-        'Failed to sync skills to group',
-      );
+      logger.error({ groupFolder, error }, 'Failed to sync skills to group');
     }
   }
 }

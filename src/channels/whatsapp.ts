@@ -8,6 +8,7 @@ import path from 'path';
 import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { storeChatMetadata, storeMessage } from '../db.js';
+import { renderQrInTerminal } from '../qr-terminal.js';
 
 const AUTH_DIR = path.join(process.cwd(), 'auth_info_baileys');
 
@@ -23,14 +24,21 @@ export class WhatsAppChannel {
     const connectSocket = async () => {
       this.sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true,
         logger: logger.child({ module: 'baileys' }),
       });
 
       this.sock.ev.on('creds.update', saveCreds);
+      let lastQr = '';
 
-      this.sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+      this.sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr && qr !== lastQr) {
+          lastQr = qr;
+          logger.info('Scan this QR code with WhatsApp > Linked Devices:');
+          const rendered = await renderQrInTerminal(qr);
+          console.log(rendered);
+        }
 
         if (connection === 'close') {
           this.connected = false;
