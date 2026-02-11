@@ -16,6 +16,15 @@ export const MAIN_GROUP_FOLDER = 'main';
 export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama2';
 
+// Container configuration
+export const CONTAINER_RUNTIME = process.env.CONTAINER_RUNTIME || 'auto'; // auto, apple-container, docker, none
+export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'babybot-agent:latest';
+export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || '1800000', 10);
+export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
+  process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
+  10,
+);
+
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(
   process.env.IDLE_TIMEOUT || '1800000',

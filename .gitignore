@@ -9,3 +9,8 @@ auth_info_baileys/
 .DS_Store
 *.db
 *.db-journal
+
+# Container build artifacts
+container/agent-runner/node_modules
+container/agent-runner/dist
+container/agent-runner/package-lock.json
