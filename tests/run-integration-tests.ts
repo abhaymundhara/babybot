@@ -4,6 +4,7 @@
 
 import { runContainerTests } from './integration/container-runtime.test.js';
 import { runSkillsTests } from './integration/skills.test.js';
+import { runAgentSwarmTests } from './integration/agent-swarm.test.js';
 
 async function runAllTests(): Promise<void> {
   console.log('\n╔════════════════════════════════════════════╗');
@@ -17,6 +18,7 @@ async function runAllTests(): Promise<void> {
   const tests = [
     { name: 'Container Runtime', fn: runContainerTests },
     { name: 'Skills System', fn: runSkillsTests },
+    { name: 'Agent Swarms', fn: runAgentSwarmTests },
   ];
   
   for (const test of tests) {

@@ -35,6 +35,13 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
 
+// Agent Swarm configuration
+export const ENABLE_AGENT_SWARMS = process.env.ENABLE_AGENT_SWARMS === 'true' || false;
+export const MAX_SWARM_SIZE = parseInt(process.env.MAX_SWARM_SIZE || '10', 10);
+export const OLLAMA_EXPERIMENTAL_AGENT_TEAMS = process.env.OLLAMA_EXPERIMENTAL_AGENT_TEAMS === '1';
+export const OLLAMA_ADDITIONAL_DIRECTORIES_MEMORY = process.env.OLLAMA_ADDITIONAL_DIRECTORIES_MEMORY === '1';
+export const OLLAMA_DISABLE_AUTO_MEMORY = process.env.OLLAMA_DISABLE_AUTO_MEMORY === '1';
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
