@@ -6,6 +6,7 @@ import { assert, assertEqual } from '../test-utils.js';
 import {
   extractSkillInvocations,
   formatSkillsListMessage,
+  isHostCommandText,
   parseHostSkillCommand,
 } from '../../src/skill-commands.js';
 
@@ -18,6 +19,36 @@ async function testParseListSkillsCommand(): Promise<void> {
 async function testIgnoreSkillSlashCommandAtHostLevel(): Promise<void> {
   const parsed = parseHostSkillCommand('/add-telegram');
   assertEqual(parsed, null, 'Expected /add-telegram to bypass host parser');
+}
+
+async function testParseTaskCommands(): Promise<void> {
+  const schedule = parseHostSkillCommand(
+    '/schedule-task interval|300000|Send status update',
+  );
+  assert(schedule !== null, 'Expected schedule-task command to parse');
+  assertEqual(schedule?.type, 'schedule-task');
+
+  const list = parseHostSkillCommand('/list-tasks all');
+  assert(list !== null, 'Expected list-tasks to parse');
+  assertEqual(list?.type, 'list-tasks');
+
+  const update = parseHostSkillCommand(
+    '/update-task 12|cron|0 9 * * *|Daily summary',
+  );
+  assert(update !== null, 'Expected update-task command to parse');
+  assertEqual(update?.type, 'update-task');
+}
+
+async function testDetectHostCommandText(): Promise<void> {
+  assert(isHostCommandText('/list-groups'), 'Expected /list-groups to be recognized');
+  assert(
+    isHostCommandText('/schedule-task cron|0 9 * * *|Prompt'),
+    'Expected /schedule-task to be recognized',
+  );
+  assert(
+    !isHostCommandText('/add-telegram'),
+    'Skill invocations should not be host commands',
+  );
 }
 
 async function testExtractSkillInvocations(): Promise<void> {
@@ -60,6 +91,8 @@ async function runSkillCommandTests(): Promise<void> {
 
   await testParseListSkillsCommand();
   await testIgnoreSkillSlashCommandAtHostLevel();
+  await testParseTaskCommands();
+  await testDetectHostCommandText();
   await testExtractSkillInvocations();
   await testIgnoreUnknownSkillInvocations();
   await testFormatSkillsListMessage();

@@ -35,6 +35,9 @@ async function testTaskIpcLifecycle(): Promise<void> {
     registerGroup: (jid: string, group: RegisteredGroup) => {
       groups[jid] = group;
     },
+    unregisterGroup: (jid: string) => {
+      delete groups[jid];
+    },
     syncGroupMetadata: async (_force: boolean) => {
       refreshed += 1;
     },
@@ -126,6 +129,17 @@ async function testTaskIpcLifecycle(): Promise<void> {
     deps,
   );
   assert(Boolean(groups['jid-3']), 'register_group should add new group');
+
+  await processTaskIpc(
+    {
+      type: 'remove_group',
+      jid: 'jid-3',
+    },
+    'main',
+    true,
+    deps,
+  );
+  assert(!groups['jid-3'], 'remove_group should remove registered group');
 
   await processTaskIpc(
     { type: 'refresh_groups' },

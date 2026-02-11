@@ -7,6 +7,7 @@ import {
   createTask,
   deleteTask,
   getTaskById,
+  updateTaskDefinition,
   updateTaskStatus,
 } from './db.js';
 import { logger } from './logger.js';
@@ -17,6 +18,7 @@ export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
+  unregisterGroup: (jid: string) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
   writeGroupsSnapshot: (
@@ -140,6 +142,7 @@ type TaskIPCRequest = {
   schedule_type?: string;
   schedule_value?: string;
   targetJid?: string;
+  requiresTrigger?: boolean;
   jid?: string;
   name?: string;
   folder?: string;
@@ -210,7 +213,8 @@ export async function processTaskIpc(
 
     case 'pause_task':
     case 'resume_task':
-    case 'cancel_task': {
+    case 'cancel_task':
+    case 'update_task': {
       if (!data.taskId) {
         logger.warn({ data, sourceGroup }, 'Task operation missing taskId');
         break;
@@ -237,6 +241,26 @@ export async function processTaskIpc(
         updateTaskStatus(taskId, 'paused');
       } else if (data.type === 'resume_task') {
         updateTaskStatus(taskId, 'active');
+      } else if (data.type === 'update_task') {
+        if (!data.prompt || !data.schedule_type || !data.schedule_value) {
+          logger.warn({ sourceGroup, taskId }, 'Invalid update_task payload');
+          break;
+        }
+        const nextRun = computeNextRun(
+          data.schedule_type as 'cron' | 'interval' | 'once',
+          data.schedule_value,
+        );
+        if (!nextRun) {
+          logger.warn({ sourceGroup, taskId }, 'Invalid schedule for update_task');
+          break;
+        }
+        updateTaskDefinition(taskId, {
+          prompt: data.prompt,
+          scheduleType: data.schedule_type as 'cron' | 'interval' | 'once',
+          scheduleValue: data.schedule_value,
+          nextRun,
+          status: 'active',
+        });
       } else {
         deleteTask(taskId);
       }
@@ -270,9 +294,22 @@ export async function processTaskIpc(
       deps.registerGroup(data.jid, {
         name: data.name,
         folder: data.folder,
-        requiresTrigger: true,
+        requiresTrigger: data.requiresTrigger ?? true,
       });
       logger.info({ sourceGroup, jid: data.jid, folder: data.folder }, 'Group registered via IPC');
+      break;
+
+    case 'remove_group':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Blocked unauthorized remove_group request');
+        break;
+      }
+      if (!data.jid) {
+        logger.warn({ data }, 'Invalid remove_group payload');
+        break;
+      }
+      deps.unregisterGroup(data.jid);
+      logger.info({ sourceGroup, jid: data.jid }, 'Group removed via IPC');
       break;
 
     default:

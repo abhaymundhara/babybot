@@ -67,6 +67,8 @@ import {
 import {
   formatSkillsListMessage,
   extractSkillInvocations,
+  HostSkillCommand,
+  isHostCommandText,
   parseHostSkillCommand,
 } from './skill-commands.js';
 import { computeNextRun } from './scheduling.js';
@@ -190,9 +192,252 @@ function unregisterGroup(jid: string): void {
   logger.info({ jid, folder: existing.folder }, 'Group unregistered');
 }
 
-async function handleHostSkillCommand(chatJid: string): Promise<void> {
-  const skills = listSkills();
-  await whatsapp.sendMessage(chatJid, formatSkillsListMessage(skills));
+function formatTasksMessage(tasks: ReturnType<typeof getAllTasks>): string {
+  if (tasks.length === 0) {
+    return 'No scheduled tasks found.';
+  }
+
+  const lines = tasks.map((task) => {
+    const prompt = task.prompt.length > 60 ? `${task.prompt.slice(0, 57)}...` : task.prompt;
+    return `- [${task.id}] ${prompt} (${task.schedule_type}: ${task.schedule_value}) - ${task.status}, next: ${task.next_run || 'N/A'}`;
+  });
+  return `Scheduled tasks:\n${lines.join('\n')}`;
+}
+
+function formatGroupsMessage(): string {
+  const available = getAvailableGroups();
+  if (available.length === 0) {
+    return 'No groups discovered yet.';
+  }
+
+  const registeredByJid = registeredGroups;
+  const lines = available.map((group) => {
+    const reg = registeredByJid[group.jid];
+    if (reg) {
+      return `- ${group.name} (${group.jid}) [registered: folder=${reg.folder}, trigger=${reg.requiresTrigger !== false ? 'required' : 'off'}]`;
+    }
+    return `- ${group.name} (${group.jid}) [unregistered]`;
+  });
+
+  return `Available groups:\n${lines.join('\n')}`;
+}
+
+function findRegisteredJidByFolder(folder: string): string | null {
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.folder === folder) return jid;
+  }
+  return null;
+}
+
+function normalizeFolderName(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+}
+
+async function handleHostCommand(
+  chatJid: string,
+  command: HostSkillCommand,
+): Promise<void> {
+  const currentGroup = registeredGroups[chatJid];
+  const isMain = isMainGroupByJid(chatJid) || currentGroup?.folder === MAIN_GROUP_FOLDER;
+
+  switch (command.type) {
+    case 'list-skills': {
+      const skills = listSkills();
+      await whatsapp.sendMessage(chatJid, formatSkillsListMessage(skills));
+      return;
+    }
+    case 'list-groups': {
+      if (!isMain) {
+        await whatsapp.sendMessage(chatJid, 'Only the main group can list available groups.');
+        return;
+      }
+      await whatsapp.sendMessage(chatJid, formatGroupsMessage());
+      return;
+    }
+    case 'register-group': {
+      if (!isMain) {
+        await whatsapp.sendMessage(chatJid, 'Only the main group can register groups.');
+        return;
+      }
+
+      if (registeredGroups[command.jid]) {
+        await whatsapp.sendMessage(chatJid, `Group is already registered: ${command.jid}`);
+        return;
+      }
+
+      const folder = normalizeFolderName(command.folder);
+      if (!folder || folder === MAIN_GROUP_FOLDER) {
+        await whatsapp.sendMessage(chatJid, 'Invalid folder name for group registration.');
+        return;
+      }
+
+      const existingFolderOwner = findRegisteredJidByFolder(folder);
+      if (existingFolderOwner) {
+        await whatsapp.sendMessage(chatJid, `Folder "${folder}" is already used by ${existingFolderOwner}.`);
+        return;
+      }
+
+      const knownChats = new Map(getAllChats().map((c) => [c.jid, c.name]));
+      const groupName = knownChats.get(command.jid) || command.jid;
+      registerGroup(command.jid, {
+        name: groupName,
+        folder,
+        requiresTrigger: !command.noTrigger,
+      });
+      updateIpcSnapshotsForAllGroups();
+      await whatsapp.sendMessage(
+        chatJid,
+        `Registered group: ${groupName} (${command.jid}) -> folder "${folder}"`,
+      );
+      return;
+    }
+    case 'remove-group': {
+      if (!isMain) {
+        await whatsapp.sendMessage(chatJid, 'Only the main group can remove groups.');
+        return;
+      }
+      const group = registeredGroups[command.jid];
+      if (!group) {
+        await whatsapp.sendMessage(chatJid, `Group is not registered: ${command.jid}`);
+        return;
+      }
+      if (group.folder === MAIN_GROUP_FOLDER) {
+        await whatsapp.sendMessage(chatJid, 'Cannot remove the main group.');
+        return;
+      }
+      unregisterGroup(command.jid);
+      updateIpcSnapshotsForAllGroups();
+      await whatsapp.sendMessage(chatJid, `Removed group ${command.jid}.`);
+      return;
+    }
+    case 'list-tasks': {
+      if (!currentGroup) {
+        await whatsapp.sendMessage(chatJid, 'Current chat is not registered.');
+        return;
+      }
+      const tasks = getAllTasks().filter((task) => {
+        if (isMain && command.scope === 'all') return true;
+        return task.group_folder === currentGroup.folder;
+      });
+      await whatsapp.sendMessage(chatJid, formatTasksMessage(tasks));
+      return;
+    }
+    case 'schedule-task': {
+      if (!currentGroup) {
+        await whatsapp.sendMessage(chatJid, 'Current chat is not registered.');
+        return;
+      }
+
+      const targetJid = command.targetJid || chatJid;
+      if (!isMain && targetJid !== chatJid) {
+        await whatsapp.sendMessage(chatJid, 'Only the main group can schedule tasks for other groups.');
+        return;
+      }
+
+      const targetGroup = registeredGroups[targetJid];
+      if (!targetGroup) {
+        await whatsapp.sendMessage(chatJid, `Target group is not registered: ${targetJid}`);
+        return;
+      }
+
+      const nextRun = computeNextRun(command.scheduleType, command.scheduleValue);
+      if (!nextRun) {
+        await whatsapp.sendMessage(
+          chatJid,
+          `Invalid schedule value for ${command.scheduleType}: ${command.scheduleValue}`,
+        );
+        return;
+      }
+
+      const taskId = createTask({
+        groupFolder: targetGroup.folder,
+        chatJid: targetJid,
+        prompt: command.prompt,
+        scheduleType: command.scheduleType,
+        scheduleValue: command.scheduleValue,
+        nextRun,
+        status: 'active',
+      });
+      updateIpcSnapshotsForAllGroups();
+      await whatsapp.sendMessage(
+        chatJid,
+        `Task ${taskId} scheduled for ${targetGroup.name} (${command.scheduleType}: ${command.scheduleValue}).`,
+      );
+      return;
+    }
+    case 'update-task': {
+      if (!currentGroup) {
+        await whatsapp.sendMessage(chatJid, 'Current chat is not registered.');
+        return;
+      }
+
+      const task = getTaskById(command.taskId);
+      if (!task) {
+        await whatsapp.sendMessage(chatJid, `Task not found: ${command.taskId}`);
+        return;
+      }
+      if (!isMain && task.group_folder !== currentGroup.folder) {
+        await whatsapp.sendMessage(chatJid, 'You can only update tasks in this group.');
+        return;
+      }
+
+      const nextRun = computeNextRun(command.scheduleType, command.scheduleValue);
+      if (!nextRun) {
+        await whatsapp.sendMessage(
+          chatJid,
+          `Invalid schedule value for ${command.scheduleType}: ${command.scheduleValue}`,
+        );
+        return;
+      }
+
+      updateTaskDefinition(command.taskId, {
+        prompt: command.prompt,
+        scheduleType: command.scheduleType,
+        scheduleValue: command.scheduleValue,
+        nextRun,
+        status: 'active',
+      });
+      updateIpcSnapshotsForAllGroups();
+      await whatsapp.sendMessage(chatJid, `Task ${command.taskId} updated.`);
+      return;
+    }
+    case 'pause-task':
+    case 'resume-task':
+    case 'cancel-task': {
+      if (!currentGroup) {
+        await whatsapp.sendMessage(chatJid, 'Current chat is not registered.');
+        return;
+      }
+
+      const task = getTaskById(command.taskId);
+      if (!task) {
+        await whatsapp.sendMessage(chatJid, `Task not found: ${command.taskId}`);
+        return;
+      }
+
+      if (!isMain && task.group_folder !== currentGroup.folder) {
+        await whatsapp.sendMessage(chatJid, 'You can only modify tasks in this group.');
+        return;
+      }
+
+      if (command.type === 'pause-task') {
+        updateTaskStatus(command.taskId, 'paused');
+      } else if (command.type === 'resume-task') {
+        updateTaskStatus(command.taskId, 'active');
+      } else {
+        deleteTask(command.taskId);
+      }
+      updateIpcSnapshotsForAllGroups();
+      const action =
+        command.type === 'pause-task'
+          ? 'paused'
+          : command.type === 'resume-task'
+            ? 'resumed'
+            : 'cancelled';
+      await whatsapp.sendMessage(chatJid, `Task ${command.taskId} ${action}.`);
+      return;
+    }
+  }
 }
 
 function getRequestedSkillsFromMessages(messages: NewMessage[]): string[] {
@@ -255,12 +500,21 @@ async function maybeHandleHostSkillCommand(
     const command = parseHostSkillCommand(messages[i].content);
     if (!command) continue;
 
-    if (command.type === 'list-skills') {
-      lastAgentTimestamp[chatJid] = messages[messages.length - 1].timestamp;
-      saveState();
-      await handleHostSkillCommand(chatJid);
-      return true;
-    }
+    lastAgentTimestamp[chatJid] = messages[messages.length - 1].timestamp;
+    saveState();
+    await handleHostCommand(chatJid, command);
+    return true;
+  }
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (!isHostCommandText(messages[i].content)) continue;
+    lastAgentTimestamp[chatJid] = messages[messages.length - 1].timestamp;
+    saveState();
+    await whatsapp.sendMessage(
+      chatJid,
+      'Invalid host command format. Use /list-skills for skills or supported admin/task commands.',
+    );
+    return true;
   }
 
   return false;
@@ -270,7 +524,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
 
-  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
+  const isMainGroup =
+    group.folder === MAIN_GROUP_FOLDER || isMainGroupByJid(chatJid);
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
   const missedMessages = getMessagesSince(
@@ -492,7 +747,10 @@ async function startMessageLoop(): Promise<void> {
               (m) =>
                 extractSkillInvocations(m.content, availableSkills).length > 0,
             );
-            if (!hasTrigger && !hasSkillInvocation) continue;
+            const hasHostCommand = groupMessages.some((m) =>
+              isHostCommandText(m.content),
+            );
+            if (!hasTrigger && !hasSkillInvocation && !hasHostCommand) continue;
           }
 
           // Enqueue processing
@@ -520,9 +778,8 @@ async function main(): Promise<void> {
   ensureGlobalMemoryFiles(GROUPS_DIR, ASSISTANT_NAME);
 
   // Create main group if not exists
-  const mainJid = '__main__';
-  if (!registeredGroups[mainJid]) {
-    registerGroup(mainJid, {
+  if (!registeredGroups[mainChatJid]) {
+    registerGroup(mainChatJid, {
       name: 'Main',
       folder: MAIN_GROUP_FOLDER,
       requiresTrigger: false,
@@ -553,8 +810,25 @@ async function main(): Promise<void> {
 
   await whatsapp.connect(
     async (chatJid, senderJid, senderName, text, chatName) => {
-      // Auto-register new chats/groups on first inbound message
+      if (chatJid === mainChatJid && !registeredGroups[chatJid]) {
+        registerGroup(chatJid, {
+          name: 'Main',
+          folder: MAIN_GROUP_FOLDER,
+          requiresTrigger: false,
+        });
+        return;
+      }
+
+      // Auto-register new chats/groups only when explicitly enabled.
       if (!registeredGroups[chatJid]) {
+        if (!AUTO_REGISTER_NEW_CHATS) {
+          logger.info(
+            { chatJid },
+            'Ignoring message from unregistered chat (AUTO_REGISTER_NEW_CHATS=false)',
+          );
+          return;
+        }
+
         // Derive a filesystem-safe folder name from the chat JID
         const safeFolder = chatJid.replace(/[^a-zA-Z0-9_\-]/g, '_');
 
@@ -590,6 +864,7 @@ async function main(): Promise<void> {
     },
     registeredGroups: () => registeredGroups,
     registerGroup,
+    unregisterGroup,
     syncGroupMetadata: async (force: boolean) => {
       await whatsapp.syncGroupMetadata(force);
       for (const group of Object.values(registeredGroups)) {
@@ -628,7 +903,7 @@ async function main(): Promise<void> {
 
     // Run the task
     await runAgent(group, task.prompt, chatJid, [], async (result) => {
-      if (result.result && chatJid !== '__main__') {
+      if (result.result && !isMainGroupByJid(chatJid)) {
         await whatsapp.sendMessage(chatJid, result.result);
       }
     });

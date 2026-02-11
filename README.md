@@ -22,6 +22,7 @@ Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw), BabyBot brings you
 - 👥 **Isolated Group Context** - Each group has its own memory and context
 - ⏰ **Scheduled Tasks** - Recurring jobs that run automatically
 - 🧩 **Agent Skill Calls** - Skills are synced NanoClaw-style and `/<skill-name>` is routed to the agent (use `/list-skills` to discover)
+- 🛠️ **Host Admin Commands** - Manage groups and tasks directly from chat (`/list-groups`, `/register-group`, `/list-tasks`, etc.)
 - 🎯 **Trigger-based Responses** - Control when the bot responds with `@Baby`
 - 📝 **Persistent Memory** - Each group maintains `CLAUDE.md` memory (with `MEMORY.md` legacy fallback)
 - 🔄 **Session Management** - Conversations maintain context across messages
@@ -95,6 +96,22 @@ Send a message to any WhatsApp group or chat with the trigger word:
 @Baby summarize the last 10 messages in this chat
 ```
 
+### Host Commands
+
+From your configured main chat (`MAIN_CHAT_JID`), you can manage groups/tasks:
+
+```text
+/list-groups
+/register-group <jid> <folder> [--no-trigger]
+/remove-group <jid>
+/list-tasks all
+/schedule-task <cron|interval|once>|<value>|<prompt>|[targetJid]
+/update-task <id>|<cron|interval|once>|<value>|<prompt>
+/pause-task <id>
+/resume-task <id>
+/cancel-task <id>
+```
+
 ### Configuration
 
 Edit `.env` to customize:
@@ -102,6 +119,12 @@ Edit `.env` to customize:
 ```bash
 # Assistant name (trigger word will be @YourName)
 ASSISTANT_NAME=Baby
+
+# Main/admin chat JID
+MAIN_CHAT_JID=15551234567@s.whatsapp.net
+
+# Strict NanoClaw-style group registration (recommended)
+AUTO_REGISTER_NEW_CHATS=false
 
 # LLM provider (ollama or openrouter)
 LLM_PROVIDER=ollama

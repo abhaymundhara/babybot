@@ -37,6 +37,13 @@ const HOST_COMMAND_NAMES = new Set([
   'cancel-task',
 ]);
 
+export function isHostCommandText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('/')) return false;
+  const command = trimmed.slice(1).split(/\s+/)[0]?.toLowerCase() || '';
+  return HOST_COMMAND_NAMES.has(command);
+}
+
 function parseTaskId(value: string): number | null {
   const id = Number.parseInt(value, 10);
   if (!Number.isFinite(id) || id <= 0) return null;
@@ -52,7 +59,8 @@ function parseScheduleType(value: string): ScheduleType | null {
 
 /**
  * Host-side command parser.
- * NanoClaw-style behavior: host handles discovery only; skill execution is agent-driven.
+ * Parses commands that are intentionally handled by the host router.
+ * Skill execution remains agent-driven via explicit /<skill-name> invocation.
  */
 export function parseHostSkillCommand(text: string): HostSkillCommand | null {
   const trimmed = text.trim();
