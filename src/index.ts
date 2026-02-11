@@ -294,14 +294,16 @@ async function main(): Promise<void> {
   // Initialize WhatsApp
   whatsapp = new WhatsAppChannel();
 
-  await whatsapp.connect(async (chatJid, senderJid, senderName, text) => {
+  await whatsapp.connect(async (chatJid, senderJid, senderName, text, chatName) => {
     // Auto-register new chats/groups on first inbound message
     if (!registeredGroups[chatJid]) {
       // Derive a filesystem-safe folder name from the chat JID
       const safeFolder = chatJid.replace(/[^a-zA-Z0-9_\-]/g, '_');
 
-      // Use a descriptive name for the group
-      const groupName = chatJid.endsWith('@g.us') ? `Group ${safeFolder}` : senderName;
+      // Use the actual chat name from WhatsApp, or fallback to sender name for DMs
+      const groupName = chatJid.endsWith('@g.us') 
+        ? chatName 
+        : `Chat with ${senderName}`;
 
       logger.info(
         { chatJid, groupName, folder: safeFolder },

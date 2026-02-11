@@ -16,7 +16,7 @@ export class WhatsAppChannel {
   private connected = false;
 
   async connect(
-    onMessage: (chatJid: string, senderJid: string, senderName: string, text: string) => Promise<void>,
+    onMessage: (chatJid: string, senderJid: string, senderName: string, text: string, chatName: string) => Promise<void>,
   ): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
@@ -97,7 +97,7 @@ export class WhatsAppChannel {
             'Received message',
           );
 
-          await onMessage(chatJid, senderJid, pushName, text);
+          await onMessage(chatJid, senderJid, pushName, text, chatName);
         }
       });
     };
