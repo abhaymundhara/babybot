@@ -690,6 +690,17 @@ async function runAgent(
         }
         if (output.status === 'error') {
           sawStreamingError = true;
+          logger.error(
+            {
+              group: group.name,
+              error:
+                output.error ||
+                (typeof output.result === 'string'
+                  ? output.result
+                  : 'Unknown streaming error'),
+            },
+            'Agent streamed error output',
+          );
         }
         await onOutput(output);
       }

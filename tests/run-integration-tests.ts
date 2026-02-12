@@ -16,6 +16,7 @@ import { runMissingParityTests } from './integration/missing-parity.test.js';
 import { runAgentRunnerToolTests } from './integration/agent-runner-tools.test.js';
 import { runGroupQueueQueryLoopTests } from './integration/group-queue-query-loop.test.js';
 import { runMcpStdioTests } from './integration/mcp-stdio.test.js';
+import { runOpenRouterFormatTests } from './integration/openrouter-message-format.test.js';
 
 async function runAllTests(): Promise<void> {
   console.log('\n╔════════════════════════════════════════════╗');
@@ -38,6 +39,7 @@ async function runAllTests(): Promise<void> {
     { name: 'IPC', fn: runIpcTests },
     { name: 'Missing Parity', fn: runMissingParityTests },
     { name: 'Agent Runner Tool Bridge', fn: runAgentRunnerToolTests },
+    { name: 'OpenRouter Message Format', fn: runOpenRouterFormatTests },
     { name: 'MCP Stdio Parity', fn: runMcpStdioTests },
     { name: 'Group Queue Query Loop', fn: runGroupQueueQueryLoopTests },
     { name: 'Agent Swarms', fn: runAgentSwarmTests },

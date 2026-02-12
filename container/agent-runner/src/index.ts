@@ -15,6 +15,7 @@ import {
   getToolDefinitions,
   ToolExecutionContext,
 } from './ipc-tools.js';
+import { toOpenRouterMessages } from './openrouter-format.js';
 
 // Sentinel markers for output parsing (must match container-runner.ts)
 const OUTPUT_START_MARKER = '---BABYBOT_OUTPUT_START---';
@@ -256,7 +257,7 @@ async function runAgent(input: AgentInput): Promise<AgentOutput> {
           headers,
           body: JSON.stringify({
             model: openRouterModel,
-            messages,
+            messages: toOpenRouterMessages(messages),
             tools,
             tool_choice: 'auto',
             stream: false,
